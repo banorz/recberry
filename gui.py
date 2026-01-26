@@ -264,9 +264,14 @@ class RecorderApp:
         self.status_label.pack(anchor="nw", side=tk.TOP, padx=30, pady=10)
 
         self.info_label = tk.Label(
-            frame, text="", font=self.button_font, bg=self.bg_color, fg="#FFD700"
+            frame, text="", font=self.log_font, bg=self.bg_color, fg="#FFD700"
         )
         self.info_label.pack(fill=tk.X)
+        
+        self.device_warning_label = tk.Label(
+            frame, text="NO MIXER FOUND", font=self.status_font, bg=self.bg_color, fg="#FF4500"
+        )
+        # We'll pack this only when device is missing
 
         btn_frame = tk.Frame(frame, bg=self.bg_color)
         btn_frame.pack(fill=tk.X, pady=10)
@@ -276,7 +281,8 @@ class RecorderApp:
             btn_frame, text="Start Recording", command=self.toggle_recording,
             font=self.button_font, bg="#008000", fg=self.fg_color,
             activebackground="#006400", activeforeground=self.fg_color,
-            relief=tk.FLAT, borderwidth=0, highlightthickness=0, pady=30
+            relief=tk.FLAT, borderwidth=0, highlightthickness=0, pady=30,
+            disabledforeground="#666"
         )
         self.record_button.pack(fill=tk.X, padx=30, pady=5)
 
@@ -516,12 +522,33 @@ class RecorderApp:
             self.info_label.config(text="")
 
     def update_status(self):
+        # Polling della scheda audio
+        if not recorder.is_recording:
+            is_connected = recorder.is_device_connected()
+            if not is_connected:
+                self.status_label.config(text="DISCONNECTED", fg="#FF4500")
+                if self.record_button['text'] != "NO MIXER":
+                    self.record_button.config(text="NO MIXER", state=tk.DISABLED, bg="#4A4A4A")
+                if not self.device_warning_label.winfo_viewable():
+                    self.device_warning_label.pack(after=self.info_label, pady=5)
+            else:
+                if self.status == "-" and self.status_label['text'] == "DISCONNECTED":
+                    self.status_label.config(text="-", fg=self.fg_color)
+                
+                if self.record_button['text'] == "NO MIXER":
+                    self.record_button.config(text="Start Recording", state=tk.NORMAL, bg="#008000")
+                    self.refresh_card()
+                    self.refresh_inputs()
+                
+                if self.device_warning_label.winfo_viewable():
+                    self.device_warning_label.pack_forget()
+
         # self.refresh_inputs()
         if not getattr(recorder, "is_recording", False) and self.record_button['text'] == "Stop Recording":
             self.append_log("GUI: Detected recording has stopped unexpectedly.")
             self.stop_recording()
         self.update_info_label()
-        self.root.after(500, self.update_status)
+        self.root.after(1000, self.update_status)
         
         # Nascondi/Mostra i pulsanti Settings e Inputs
         if recorder.is_recording:

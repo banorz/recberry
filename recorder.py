@@ -369,73 +369,95 @@ def get_alsa_device_and_channels():
     except subprocess.CalledProcessError as e:
         log(f"Error listing ALSA devices: {e.stderr if e.stderr else e.stdout}")
         return None, 0
-    except Exception as e:
-        log(f"An unexpected error occurred while getting ALSA device info: {e}")
-        return None, 0
+def is_device_connected():
+    """Restituisce True se almeno una scheda audio USB è presente in 'arecord -l'."""
+    try:
+        arecord_l_output = subprocess.check_output(['arecord', '-l'], text=True, timeout=5)
+        card_pattern = re.compile(r"card\s+(\d+):\s*([A-Za-z0-9\-_]+)\s+\[(.*USB.*)\].*", re.IGNORECASE)
+        card_pattern_alt = re.compile(r"card\s+(\d+):\s*(USB[A-Za-z0-9\-_]*)\s*\[.*", re.IGNORECASE)
 
-def _record_audio_thread(alsa_device, output_directory_path, selected_inputs, channel_count, status_callback=None):
-    global is_recording, recording_process, status
-    log(f"Starting recording from ALSA device: {alsa_device}, saving FLAC files to directory: {output_directory_path}")
+        for line in arecord_l_output.splitlines():
+            if card_pattern.match(line) or card_pattern_alt.match(line):
+                return True
+        return False
+    except Exception:
+        return False
+
+def _record_audio_thread(alsa_device, session_name, selected_inputs, channel_count, status_callback=None):
+    global is_recording, recording_process, status, current_storage
+    log(f"Starting recording session: {session_name} from ALSA device: {alsa_device}")
 
     part = 1
     while is_recording:
+        # --- Storage Detection Logic for each part ---
+        storage_path = mount_usb_drive()
+        if storage_path:
+            current_storage = "USB"
+        else:
+            log("Wait: USB not found or mount failed. Using internal storage fallback.")
+            storage_path = FALLBACK_STORAGE_PATH
+            os.makedirs(storage_path, exist_ok=True)
+            current_storage = "SD"
+
+        output_directory_base = os.path.join(storage_path, session_name)
+        os.makedirs(output_directory_base, exist_ok=True)
+
         part_suffix = f"_part{part}" if part > 1 else ""
-        part_dir = output_directory_path + part_suffix
-        # check if the directory already exists. If it does, increment part number
-        if os.path.exists(part_dir):
+        part_dir = output_directory_base + part_suffix
+        
+        # Se la directory parte esiste già (magari perché siamo tornati su USB dopo un fallback), incrementa part
+        while os.path.exists(part_dir):
             part += 1
-            continue
+            part_suffix = f"_part{part}" if part > 1 else ""
+            part_dir = output_directory_base + part_suffix
+
         os.makedirs(part_dir, exist_ok=True)
+        log(f"Recording to {current_storage}: {part_dir}")
 
         command = [
             'ffmpeg', '-y', '-nostdin', '-f', 'alsa',
             '-thread_queue_size', '2048',
             '-channels', str(channel_count),
-            '-ar', _samplerate,
+            '-ar', str(_samplerate),
             '-i', alsa_device,
         ]
 
         for i in selected_inputs:
             command.extend([
                 '-map_channel', f'0.0.{i}',
-                '-ar', _samplerate,
+                '-ar', str(_samplerate),
                 '-c:a', 'flac',
                 os.path.join(part_dir, f'ch{i+1}.flac')
             ])
-
-        log("Executing ffmpeg command...")
-        log(f"Command: {' '.join(command)}")
 
         if(status!="RESUMING"):
             if status_callback:
                 status_callback("RECORDING", "#FF0000")
                 status = "RECORDING"
         
-
-
         try:
             recording_process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-            time.sleep(2)
+            time.sleep(1) # Reduced from 2 to 1 for faster recovery
             if(status=="RESUMING"):
                 if status_callback:
                     status_callback("RECORDING", "#FF0000")
                     status = "RECORDING"
+            
             if recording_process.poll() is not None:
                 stdout, stderr = recording_process.communicate()
-                log(f"ffmpeg failed to start (code {recording_process.returncode}).")
+                log(f"ffmpeg failed to start on {current_storage} (code {recording_process.returncode}).")
                 if stderr:
                     log(f"ffmpeg stderr:\n{stderr.strip()}")
                 if not is_recording:
                     break
-                log("Waiting 3 seconds before retrying recording (part failsafe)...")
+                log("Waiting 1 second before retrying recording (storage/part failsafe)...")
                 if status_callback:
                     status = "RESUMING"
                     status_callback("RESUMING", "#FFD700")
-                time.sleep(3)
-                
+                time.sleep(1)
                 continue
 
-            log(f"ffmpeg process started with PID: {recording_process.pid}")
+            log(f"ffmpeg process started with PID: {recording_process.pid} on {current_storage}")
             stdout, stderr = recording_process.communicate()
 
             log(f"ffmpeg process finished with return code: {recording_process.returncode}")
@@ -443,30 +465,28 @@ def _record_audio_thread(alsa_device, output_directory_path, selected_inputs, ch
                 log(f"ffmpeg stderr:\n{stderr.strip()}")
 
             if is_recording:
-                log("ffmpeg exited with error during recording. Waiting 3 seconds and retrying (part failsafe)...")
+                log(f"ffmpeg exited on {current_storage}. Checking for alternative storage and retrying...")
                 if status_callback:
                     status_callback("RESUMING", "#FFD700")
                     status = "RESUMING"
-                time.sleep(3)
-            
+                time.sleep(1)
                 continue
             else:
                 break
 
         except FileNotFoundError:
             log("FATAL: ffmpeg command not found. Please install ffmpeg.")
-
             is_recording = False
             break
         except Exception as e:
-            log(f"Error during recording thread: {e}")
+            log(f"Error during recording thread on {current_storage}: {e}")
             if not is_recording:
                 break
             if status_callback:
                 status_callback("RESUMING", "#FFD700")
                 status = "RESUMING"
-            log("Waiting 3 seconds before retrying recording...")
-            time.sleep(3)
+            log("Waiting 1 second before retrying recording...")
+            time.sleep(1)
             continue
 
     log("Recording audio thread finished.")
@@ -503,29 +523,18 @@ def start_recording(selected_inputs=None, status_callback=None):
             log("No valid inputs selected for recording.")
             return False
 
-    storage_path = mount_usb_drive()
-    if storage_path:
-        current_storage = "USB"
-    else:
-        log("USB mount failed. Falling back to internal storage.")
-        storage_path = FALLBACK_STORAGE_PATH
-        os.makedirs(storage_path, exist_ok=True)
-        current_storage = "SD"
     status = "-"
     is_recording = True
     recording_start_time = time.time()
     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
     session_name = f"recording_{timestamp}"
-    output_directory_path = os.path.join(storage_path, session_name)
 
-    os.makedirs(output_directory_path, exist_ok=True)
-
-    log(f"Recording {len(selected_inputs)} channels. Files will be saved in: {output_directory_path}")
+    log(f"Initiating recording session {session_name} with {len(selected_inputs)} channels.")
     set_led_state('blink')
 
     recording_thread = threading.Thread(
         target=_record_audio_thread,
-        args=(alsa_device, output_directory_path, selected_inputs, channel_count, status_callback)
+        args=(alsa_device, session_name, selected_inputs, channel_count, status_callback)
     )
     recording_thread.daemon = True
     recording_thread.start()
