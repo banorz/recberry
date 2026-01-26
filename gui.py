@@ -26,6 +26,11 @@ class RecorderApp:
         self.input_font = font.Font(family="Helvetica", size=10, weight="bold")
         self.status = "-"
         self.root.configure(bg=self.bg_color)
+        
+        # Inizializzazioni per evitare AttributeError prima della creazione screen
+        self.samplerate = self.get_samplerate()
+        self.wifi_enabled = True 
+        
         # Stato per inputs
         self.inputs = self.get_inputs()
         self.alsa_device = ""
@@ -269,7 +274,7 @@ class RecorderApp:
         self.info_label.pack(fill=tk.X)
         
         self.device_warning_label = tk.Label(
-            frame, text="NO MIXER FOUND", font=self.status_font, bg=self.bg_color, fg="#FF4500"
+            frame, text="USB AUDIO NOT FOUND", font=self.status_font, bg=self.bg_color, fg="#FF4500"
         )
         # We'll pack this only when device is missing
 
@@ -296,13 +301,25 @@ class RecorderApp:
     def create_inputs_screen(self):
         if "inputs" in self.frames:
             self.frames["inputs"].destroy()
+        
         frame = tk.Frame(self.root, bg=self.bg_color)
         self.frames["inputs"] = frame
+
+        # Pulsante Back SEMPRE presente
         back_btn = tk.Button(
             frame, text="Back", command=lambda: self.show_frame("home"),
             font=self.button_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=50, pady=20
         )
         back_btn.pack(side=tk.TOP, anchor="ne", padx=0, pady=0)
+
+        if not recorder.is_device_connected():
+            error_label = tk.Label(
+                frame, text="NO USB AUDIO DEVICE CONNECTED", 
+                font=self.button_font, bg=self.bg_color, fg="#FF4500"
+            )
+            error_label.pack(expand=True)
+            return
+
         # Scrollbar orizzontale
         canvas = tk.Canvas(frame, bg=self.bg_color, highlightthickness=0, width=480, height=150)
         canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=10)
@@ -391,10 +408,12 @@ class RecorderApp:
         self.frames[name].pack(fill=tk.BOTH, expand=True)
         if name == "inputs":
             self.audio_monitoring = True
-            self.refresh_card()
-            self.refresh_inputs()
-            self.update_inputs_screen()
-            self.monitor_audio_levels()
+            self.create_inputs_screen() # Ricrea sempre per gestire stato disconnesso
+            if recorder.is_device_connected():
+                self.refresh_card()
+                self.refresh_inputs()
+                self.update_inputs_screen()
+                self.monitor_audio_levels()
         else:
             self.audio_monitoring = False
         if name == "settings":
@@ -527,15 +546,15 @@ class RecorderApp:
             is_connected = recorder.is_device_connected()
             if not is_connected:
                 self.status_label.config(text="DISCONNECTED", fg="#FF4500")
-                if self.record_button['text'] != "NO MIXER":
-                    self.record_button.config(text="NO MIXER", state=tk.DISABLED, bg="#4A4A4A")
+                if self.record_button['text'] != "NO USB AUDIO":
+                    self.record_button.config(text="NO USB AUDIO", state=tk.DISABLED, bg="#4A4A4A")
                 if not self.device_warning_label.winfo_viewable():
                     self.device_warning_label.pack(after=self.info_label, pady=5)
             else:
                 if self.status == "-" and self.status_label['text'] == "DISCONNECTED":
                     self.status_label.config(text="-", fg=self.fg_color)
                 
-                if self.record_button['text'] == "NO MIXER":
+                if self.record_button['text'] == "NO USB AUDIO":
                     self.record_button.config(text="Start Recording", state=tk.NORMAL, bg="#008000")
                     self.refresh_card()
                     self.refresh_inputs()

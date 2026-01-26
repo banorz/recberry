@@ -458,17 +458,48 @@ def _record_audio_thread(alsa_device, session_name, selected_inputs, channel_cou
                 continue
 
             log(f"ffmpeg process started with PID: {recording_process.pid} on {current_storage}")
+            
+            # --- Monitor Loop ---
+            # Invece di communicate() (bloccante), usiamo un loop di polling
+            # per reagire ai cambi di storage (disco rimosso o inserito)
+            while is_recording and recording_process.poll() is None:
+                # 1. Se siamo su USB, controlla che sia ancora montata
+                if current_storage == "USB":
+                    if not os.path.ismount(USB_MOUNT_POINT):
+                        log("USB DISK UNPLUGGED! Terminating ffmpeg to trigger fallback...")
+                        recording_process.terminate()
+                        break
+                
+                # 2. Se siamo su SD, controlla se è apparso un disco USB
+                elif current_storage == "SD":
+                    # Controllo rapido: c'è un device USB in /dev/disk/by-id/ ?
+                    usb_found = False
+                    try:
+                        if os.path.exists("/dev/disk/by-id"):
+                            for f in os.listdir("/dev/disk/by-id"):
+                                if "usb" in f.lower():
+                                    usb_found = True
+                                    break
+                    except Exception:
+                        pass
+                    
+                    if usb_found:
+                        log("USB DISK DETECTED! Terminating SD recording to switch to USB...")
+                        recording_process.terminate()
+                        break
+                
+                time.sleep(1) # Polling ogni secondo
+            
             stdout, stderr = recording_process.communicate()
 
             log(f"ffmpeg process finished with return code: {recording_process.returncode}")
             if stderr:
-                log(f"ffmpeg stderr:\n{stderr.strip()}")
+                # Logga solo se c'è un errore reale (non terminazione manuale)
+                if recording_process.returncode not in (0, -15, 255):
+                    log(f"ffmpeg stderr:\n{stderr.strip()}")
 
             if is_recording:
-                log(f"ffmpeg exited on {current_storage}. Checking for alternative storage and retrying...")
-                if status_callback:
-                    status_callback("RESUMING", "#FFD700")
-                    status = "RESUMING"
+                # Ri-verifica lo storage nel prossimo ciclo
                 time.sleep(1)
                 continue
             else:
