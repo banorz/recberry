@@ -23,11 +23,24 @@ USB_MOUNT_POINT = "/mnt/usbrecorder"
 is_recording = False
 recording_process = None
 recording_thread = None
+sync_thread = None
 current_storage = None  # "USB" o "SD"
 recording_start_time = None
 log_callback = None
 available_inputs = 0
 status = ''
+
+def periodic_sync_worker():
+    """Lancia il comando sync ogni 30 secondi finché la registrazione è attiva."""
+    global is_recording
+    while is_recording:
+        try:
+            subprocess.run(['sync'], check=False)
+        except Exception:
+            pass
+        for _ in range(30):
+            if not is_recording: break
+            time.sleep(1)
 _samplerate = 48000
 _user_name = getpass.getuser()
 _user_info = pwd.getpwnam(_user_name)
@@ -236,6 +249,9 @@ def mount_usb_drive():
                 except Exception as e:
                     log(f"Could not verify if {USB_MOUNT_POINT} is correctly mounted: {e}")
 
+            if is_already_mounted_correctly:
+                return USB_MOUNT_POINT
+
             if not is_already_mounted_correctly:
                 log(f"Unmounting {target_partition} if mounted elsewhere, or {USB_MOUNT_POINT} if occupied...")
                 subprocess.run(['sudo', 'umount', target_partition], stderr=subprocess.DEVNULL, check=False)
@@ -270,7 +286,9 @@ def mount_usb_drive():
 def unmount_usb_drive():
     if os.path.ismount(USB_MOUNT_POINT):
         log(f"Unmounting {USB_MOUNT_POINT}...")
-        log("Syncing filesystems to ensure data is written...")
+        log("Syncing filesystems to ensure data is written (Multiple passes)...")
+        subprocess.run(['sync'], check=False)
+        time.sleep(1)
         subprocess.run(['sync'], check=False)
         time.sleep(1)
 
@@ -384,39 +402,50 @@ def is_device_connected():
         return False
 
 def _record_audio_thread(alsa_device, session_name, selected_inputs, channel_count, status_callback=None):
-    global is_recording, recording_process, status, current_storage
+    global is_recording, recording_process, status, current_storage, sync_thread
     log(f"Starting recording session: {session_name} from ALSA device: {alsa_device}")
+
+    # Avvia il thread di sync periodico
+    sync_thread = threading.Thread(target=periodic_sync_worker, daemon=True)
+    sync_thread.start()
 
     part = 1
     while is_recording:
         # --- Storage Detection Logic for each part ---
         storage_path = mount_usb_drive()
         if storage_path:
+            if current_storage == "SD":
+                log("Switching from SD to USB storage.")
             current_storage = "USB"
         else:
-            log("Wait: USB not found or mount failed. Using internal storage fallback.")
+            if current_storage == "USB":
+                log("USB lost or mount failed. Falling back to SD.")
             storage_path = FALLBACK_STORAGE_PATH
             os.makedirs(storage_path, exist_ok=True)
             current_storage = "SD"
 
         output_directory_base = os.path.join(storage_path, session_name)
-        os.makedirs(output_directory_base, exist_ok=True)
+        # We don't create output_directory_base here anymore because if part=1, 
+        # part_dir will BE output_directory_base and the exists check below would trigger.
 
         part_suffix = f"_part{part}" if part > 1 else ""
         part_dir = output_directory_base + part_suffix
         
-        # Se la directory parte esiste già (magari perché siamo tornati su USB dopo un fallback), incrementa part
+        # Se la directory o il file esiste già (magari perché siamo tornati su USB dopo un fallback), incrementa part
         while os.path.exists(part_dir):
             part += 1
             part_suffix = f"_part{part}" if part > 1 else ""
             part_dir = output_directory_base + part_suffix
 
         os.makedirs(part_dir, exist_ok=True)
-        log(f"Recording to {current_storage}: {part_dir}")
+        abs_part_dir = os.path.abspath(part_dir)
+        log(f"Recording to {current_storage}: {abs_part_dir}")
 
         command = [
-            'ffmpeg', '-y', '-nostdin', '-f', 'alsa',
-            '-thread_queue_size', '2048',
+            'ffmpeg', '-y', '-nostdin',
+            '-f', 'alsa',
+            '-thread_queue_size', '4096',  # Increased buffer
+            '-use_wallclock_as_timestamps', '1',
             '-channels', str(channel_count),
             '-ar', str(_samplerate),
             '-i', alsa_device,
@@ -425,6 +454,7 @@ def _record_audio_thread(alsa_device, session_name, selected_inputs, channel_cou
         for i in selected_inputs:
             command.extend([
                 '-map_channel', f'0.0.{i}',
+                '-af', 'aresample=async=1',  # Compensate for clock jitter
                 '-ar', str(_samplerate),
                 '-c:a', 'flac',
                 os.path.join(part_dir, f'ch{i+1}.flac')
@@ -436,7 +466,11 @@ def _record_audio_thread(alsa_device, session_name, selected_inputs, channel_cou
                 status = "RECORDING"
         
         try:
-            recording_process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            # Crea un file di log per FFmpeg
+            ffmpeg_log_path = os.path.join(part_dir, "ffmpeg_debug.log")
+            with open(ffmpeg_log_path, "w") as ffmpeg_log_file:
+                recording_process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=ffmpeg_log_file, text=True)
+            
             time.sleep(1) # Reduced from 2 to 1 for faster recovery
             if(status=="RESUMING"):
                 if status_callback:
@@ -448,13 +482,22 @@ def _record_audio_thread(alsa_device, session_name, selected_inputs, channel_cou
                 log(f"ffmpeg failed to start on {current_storage} (code {recording_process.returncode}).")
                 if stderr:
                     log(f"ffmpeg stderr:\n{stderr.strip()}")
+                
+                # Cleanup empty part directory if it was just created and failed
+                try:
+                    if os.path.exists(part_dir) and not os.listdir(part_dir):
+                        os.rmdir(part_dir)
+                        log(f"Removed empty directory: {part_dir}")
+                except Exception:
+                    pass
+
                 if not is_recording:
                     break
-                log("Waiting 1 second before retrying recording (storage/part failsafe)...")
+                log("Waiting 2 seconds before retrying recording...")
                 if status_callback:
                     status = "RESUMING"
                     status_callback("RESUMING", "#FFD700")
-                time.sleep(1)
+                time.sleep(2)
                 continue
 
             log(f"ffmpeg process started with PID: {recording_process.pid} on {current_storage}")
@@ -470,8 +513,13 @@ def _record_audio_thread(alsa_device, session_name, selected_inputs, channel_cou
                         recording_process.terminate()
                         break
                 
-                # 2. Se siamo su SD, controlla se è apparso un disco USB
                 elif current_storage == "SD":
+                    # Non segnalare USB se è già montata correttamente
+                    if os.path.ismount(USB_MOUNT_POINT):
+                        log("USB is mounted but we are on SD. Re-syncing...")
+                        recording_process.terminate()
+                        break
+                    
                     # Controllo rapido: c'è un device USB in /dev/disk/by-id/ ?
                     usb_found = False
                     try:
@@ -490,13 +538,15 @@ def _record_audio_thread(alsa_device, session_name, selected_inputs, channel_cou
                 
                 time.sleep(1) # Polling ogni secondo
             
-            stdout, stderr = recording_process.communicate()
-
-            log(f"ffmpeg process finished with return code: {recording_process.returncode}")
-            if stderr:
-                # Logga solo se c'è un errore reale (non terminazione manuale)
-                if recording_process.returncode not in (0, -15, 255):
-                    log(f"ffmpeg stderr:\n{stderr.strip()}")
+            # Store a local reference to avoid race condition when recording_process is set to None globally
+            proc = recording_process
+            if proc:
+                stdout, stderr = proc.communicate()
+                log(f"ffmpeg process finished with return code: {proc.returncode}")
+                if stderr:
+                    # Logga solo se c'è un errore reale (non terminazione manuale)
+                    if proc.returncode not in (0, -15, 255):
+                        log(f"ffmpeg stderr:\n{stderr.strip()}")
 
             if is_recording:
                 # Ri-verifica lo storage nel prossimo ciclo
@@ -572,7 +622,7 @@ def start_recording(selected_inputs=None, status_callback=None):
     return True
 
 def stop_recording():
-    global is_recording, recording_process, recording_thread, recording_start_time
+    global is_recording, recording_process, recording_thread, recording_start_time, sync_thread
     if not is_recording:
         log("Not currently recording.")
         unmount_usb_drive()
@@ -580,6 +630,7 @@ def stop_recording():
         return False
 
     log("\n--- STOPPING RECORDING ---")
+    is_recording = False # Imposta a False prima del join così i thread sanno di dover uscire
 
     if recording_process and recording_process.poll() is None:
         log(f"Terminating ffmpeg process (PID: {recording_process.pid})...")
@@ -593,10 +644,13 @@ def stop_recording():
             if recording_process and recording_process.poll() is None:
                 recording_process.kill()
 
-    log("Recording stopped.")
-    is_recording = False
-    recording_process = None
-    recording_thread = None
+    # Aspetta il thread di sync
+    if sync_thread and sync_thread.is_alive():
+        sync_thread.join(timeout=2)
+
+    log("Recording stopped. Final sync...")
+    subprocess.run(['sync'], check=False)
+    # Don't set recording_process = None here, let the thread handle it to avoid race conditions
     recording_start_time = None
 
     set_led_state('default')

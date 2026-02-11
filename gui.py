@@ -27,6 +27,10 @@ class RecorderApp:
         self.status = "-"
         self.root.configure(bg=self.bg_color)
         
+        # Rimuove solo i bordini di focus che sono antiestetici su touchscreen
+        self.root.option_add("*Button.highlightThickness", 0)
+        self.root.option_add("*Button.takeFocus", 0)
+        
         # Inizializzazioni per evitare AttributeError prima della creazione screen
         self.samplerate = self.get_samplerate()
         self.wifi_enabled = True 
@@ -103,6 +107,26 @@ class RecorderApp:
             recorder.log(f"Error enabling WiFi: {e.stderr}")
             self.wifi_ssid_label.config(text=f"{e.stderr.strip()}")
 
+    def power_off(self):
+        if recorder.is_recording:
+            recorder.log("Cannot power off while recording!")
+            return
+        try:
+            recorder.log("Powering off...")
+            subprocess.run(["sudo", "poweroff"], check=True)
+        except Exception as e:
+            recorder.log(f"Error during power off: {e}")
+
+    def reboot(self):
+        if recorder.is_recording:
+            recorder.log("Cannot reboot while recording!")
+            return
+        try:
+            recorder.log("Rebooting...")
+            subprocess.run(["sudo", "reboot"], check=True)
+        except Exception as e:
+            recorder.log(f"Error during reboot: {e}")
+
     def update_wifi_buttons(self):
         if self.wifi_enabled:
             self.wifi_enable_btn.config(bg="#008000", fg=self.fg_color)
@@ -112,7 +136,6 @@ class RecorderApp:
             self.wifi_disable_btn.config(bg="#008000", fg=self.fg_color)
 
     def update_wifi_ssid(self):
-        print("ciao")
         try:
             result = subprocess.run(["nmcli", "dev", "show", "wlan0"], capture_output=True, text=True, check=True)
             output = result.stdout
@@ -185,7 +208,8 @@ class RecorderApp:
         # --- Back Button ---
         back_btn = tk.Button(
             frame, text="Back", command=lambda: self.show_frame("home"),
-            font=self.button_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=50, pady=20
+            font=self.button_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=50, pady=20,
+            takefocus=0
         )
         back_btn.grid(row=0, column=0, sticky="nw", padx=0, pady=0)
 
@@ -194,8 +218,9 @@ class RecorderApp:
         restart_frame.grid(row=0, column=0, sticky="ne", padx=100, pady=0)  # Posiziona a destra
 
         self.restart_lightdm_btn = tk.Button(
-            restart_frame, text="Restart", command=self.restart_lightdm,
-            font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0
+            restart_frame, text="Restart GUI", command=self.restart_lightdm,
+            font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
+            takefocus=0
         )
         self.restart_lightdm_btn.pack(side=tk.TOP, anchor="ne", padx=0, pady=0)  # Usa pack nel frame
         
@@ -206,11 +231,13 @@ class RecorderApp:
         self.samplerate = self.get_samplerate()
         self.samplerate_44100_btn = tk.Button(
             samplerate_frame, text="44100 Hz", command=lambda: self.set_samplerate(44100),
-            font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0
+            font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
+            takefocus=0
         )
         self.samplerate_48000_btn = tk.Button(
             samplerate_frame, text="48000 Hz", command=lambda: self.set_samplerate(48000),
-            font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0
+            font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
+            takefocus=0
         )
         self.update_samplerate_buttons()  # Imposta lo stato iniziale dei bottoni
 
@@ -224,11 +251,13 @@ class RecorderApp:
         self.wifi_enabled = True  # Inizializza con lo stato corrente
         self.wifi_enable_btn = tk.Button(
             wifi_frame, text="WiFi Enable", command=self.enable_wifi,
-            font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0
+            font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
+            takefocus=0
         )
         self.wifi_disable_btn = tk.Button(
             wifi_frame, text="WiFi Disable", command=self.disable_wifi,
-            font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0
+            font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
+            takefocus=0
         )
         self.update_wifi_buttons()  # Imposta lo stato iniziale dei bottoni
 
@@ -240,6 +269,24 @@ class RecorderApp:
         )
         self.wifi_ssid_label.grid(row=1, column=0, columnspan=2, pady=10)
         self.update_wifi_ssid()  # Aggiorna l'SSID all'avvio
+
+        # --- System Options (Power/Reboot) ---
+        system_frame = tk.Frame(frame, bg=self.bg_color)
+        system_frame.grid(row=3, column=0, pady=5)
+
+        self.reboot_btn = tk.Button(
+            system_frame, text="Reboot", command=self.reboot,
+            font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
+            takefocus=0, padx=20
+        )
+        self.poweroff_btn = tk.Button(
+            system_frame, text="Power Off", command=self.power_off,
+            font=self.button_font, bg="#B22222", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
+            takefocus=0, padx=20
+        )
+
+        self.reboot_btn.grid(row=0, column=0, padx=10)
+        self.poweroff_btn.grid(row=0, column=1, padx=10)
         
     
     # --- SCHERMATE ---
@@ -253,13 +300,15 @@ class RecorderApp:
         # Pulsante Settings
         self.settings_button = tk.Button(
             top_frame, text="Settings", command=lambda: self.show_frame("settings"),
-            font=self.log_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=50, pady=20
+            font=self.log_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=50, pady=20,
+            takefocus=0
         )
         self.settings_button.pack(side=tk.LEFT, anchor="nw")
 
         self.inputs_button = tk.Button(
             top_frame, text="Inputs", command=lambda: self.show_frame("inputs"),
-            font=self.log_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=50, pady=20
+            font=self.log_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=50, pady=20,
+            takefocus=0
         )
         self.inputs_button.pack(side=tk.RIGHT, anchor="ne")
 
@@ -287,7 +336,7 @@ class RecorderApp:
             font=self.button_font, bg="#008000", fg=self.fg_color,
             activebackground="#006400", activeforeground=self.fg_color,
             relief=tk.FLAT, borderwidth=0, highlightthickness=0, pady=30,
-            disabledforeground="#666"
+            disabledforeground="#666", takefocus=0
         )
         self.record_button.pack(fill=tk.X, padx=30, pady=5)
 
@@ -299,16 +348,23 @@ class RecorderApp:
         self.last_log_label.pack(fill=tk.X, padx=10, pady=(5, 0))
 
     def create_inputs_screen(self):
+        # Invece di distruggere l'intero frame (che causa problemi di visualizzazione), 
+        # lo svuotiamo se esiste già.
         if "inputs" in self.frames:
-            self.frames["inputs"].destroy()
+            for widget in self.frames["inputs"].winfo_children():
+                widget.destroy()
+            frame = self.frames["inputs"]
+        else:
+            frame = tk.Frame(self.root, bg=self.bg_color)
+            self.frames["inputs"] = frame
         
-        frame = tk.Frame(self.root, bg=self.bg_color)
-        self.frames["inputs"] = frame
+        recorder.log(f"Refreshing inputs screen. Count: {len(self.inputs)}")
 
         # Pulsante Back SEMPRE presente
         back_btn = tk.Button(
             frame, text="Back", command=lambda: self.show_frame("home"),
-            font=self.button_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=50, pady=20
+            font=self.button_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=50, pady=20,
+            takefocus=0
         )
         back_btn.pack(side=tk.TOP, anchor="ne", padx=0, pady=0)
 
@@ -320,11 +376,29 @@ class RecorderApp:
             error_label.pack(expand=True)
             return
 
-        # Scrollbar orizzontale
-        canvas = tk.Canvas(frame, bg=self.bg_color, highlightthickness=0, width=480, height=150)
-        canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True, pady=10)
+        # Contenitore principale per navigation + canvas
+        main_container = tk.Frame(frame, bg=self.bg_color)
+        main_container.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        h_scroll = tk.Scrollbar(frame, orient=tk.HORIZONTAL, command=canvas.xview, width=40)
+        # Pulsanti di navigazione orizzontale ai lati (Fixed character width)
+        left_btn = tk.Button(
+            main_container, text="<<", command=lambda: canvas.xview_scroll(-1, 'pages'),
+            font=self.button_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=1, width=4, takefocus=0
+        )
+        left_btn.pack(side=tk.LEFT, fill=tk.Y)
+
+        right_btn = tk.Button(
+            main_container, text=">>", command=lambda: canvas.xview_scroll(1, 'pages'),
+            font=self.button_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=1, width=4, takefocus=0
+        )
+        right_btn.pack(side=tk.RIGHT, fill=tk.Y)
+
+        # Canvas centrale (360px per mostrare esattamente 2 colonne da 180px)
+        canvas = tk.Canvas(main_container, bg=self.bg_color, highlightthickness=0, width=360)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        # Scrollbar sottile in fondo
+        h_scroll = tk.Scrollbar(frame, orient=tk.HORIZONTAL, command=canvas.xview, width=20)
         h_scroll.pack(side=tk.BOTTOM, fill=tk.X)
         canvas.configure(xscrollcommand=h_scroll.set)
 
@@ -335,42 +409,44 @@ class RecorderApp:
         self.input_circles = []
         self.input_audio_circles = []
 
-        # Layout: max 4 input per colonna, colonne affiancate
+        # Layout: 3 righe per colonna, 2 colonne visibili (360px / 180px = 2)
         inputs_per_col = 3
-        col_width = 160
-        row_height = 50
-        circle_r = 18
+        col_width = 138
+        row_height = 80 
+        circle_r = 22  
 
         for idx, name in enumerate(self.inputs):
             col = idx // inputs_per_col
             row = idx % inputs_per_col
-            x0 = col * col_width + 10
-            y0 = row * row_height + 10
+            
+            # Estraggo solo il numero dal nome (es: "INPUT 1" -> "1")
+            short_name = name.split()[-1]
 
-            # Canvas per ogni input (per gestire click e cerchi grandi)
-            input_canvas = tk.Canvas(inner, width=col_width-10, height=row_height, bg=self.bg_color, highlightthickness=1)
-            input_canvas.grid(row=row, column=col, padx=2, pady=2)
+            # Canvas per ogni input
+            input_canvas = tk.Canvas(inner, width=col_width-10, height=row_height-5, bg=self.bg_color, highlightthickness=1)
+            input_canvas.grid(row=row, column=col, padx=5, pady=2)
 
-            # Cerchio abilitazione
-            circle = input_canvas.create_oval(10, 10, 10+circle_r*2, 10+circle_r*2,
+            # Cerchio abilitazione (Più grande)
+            circle = input_canvas.create_oval(10, 15, 10+circle_r*2, 15+circle_r*2,
                                               fill="#00FF00", outline="")
             if not self.input_enabled[idx]:
                 input_canvas.itemconfig(circle, fill="#006400")
             self.input_circles.append((input_canvas, circle))
+            
             # Cerchio audio detect
-            audio_circle = input_canvas.create_oval(10+circle_r*2+10, 18, 10+circle_r*2+10+circle_r, 18+circle_r,
+            audio_circle = input_canvas.create_oval(10+circle_r*2+12, 28, 10+circle_r*2+12+15, 24+15,
                                                    fill="#222", outline="")
             self.input_audio_circles.append((input_canvas, audio_circle))
-            # Nome input
-            input_canvas.create_text(10+circle_r*2+10+circle_r+10, 30, text=name, anchor="w", fill="#FFD700", font=self.input_font)
+            
+            # Numero input (Fonte più piccolo e spostato di 4px a dx rispetto a prima)
+            input_canvas.create_text(10+circle_r*2+12+24, 38, text=short_name, anchor="w", fill="#FFD700", font=self.button_font)
+            
             # Click handler
+            input_canvas.bind("<Button-1>", lambda e, i=idx: self.toggle_input(i))
             input_canvas.tag_bind(circle, "<Button-1>", lambda e, i=idx: self.toggle_input(i))
 
-        # Aggiorna la larghezza del canvas interno per lo scroll
-        n_cols = (len(self.inputs) + inputs_per_col - 1) // inputs_per_col
         inner.update_idletasks()
-        
-        canvas.config(scrollregion=canvas.bbox("all"), width=480, height=150)
+        canvas.config(scrollregion=canvas.bbox("all"))
         canvas.xview_moveto(0)
         self.update_inputs_screen()
 
@@ -406,6 +482,7 @@ class RecorderApp:
         for f in self.frames.values():
             f.pack_forget()
         self.frames[name].pack(fill=tk.BOTH, expand=True)
+
         if name == "inputs":
             self.audio_monitoring = True
             self.create_inputs_screen() # Ricrea sempre per gestire stato disconnesso
