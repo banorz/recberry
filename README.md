@@ -8,7 +8,11 @@
 ## 🚀 Project Purpose
 The goal of Recberry is to transform a Raspberry Pi into a professional "plug-and-play" audio workstation. The system automatically detects connected USB audio interfaces, allows for real-time level monitoring, and ensures recording continuity with automatic storage fallback. It now includes a full-featured playback and mixing engine to review sessions in the field.
 
-## ✨ Main Features
+## ⚠️ Hardware Disclaimer
+This system has been exclusively tested with **3.5" SPI LCD displays** (like the WaveShare tft35a overlay) with a native resolution of **480x320**. While it might work on other displays, the UI layout is strictly optimized for these specific screen dimensions and aspect ratio.
+
+## 🎨 Contributions & Graphical Optimizations
+Graphic and UI optimizations are highly welcome! If you have ideas for improving the layout, adding animations, or modernizing the interface while keeping it touch-friendly, feel free to contribute.
 - **Multi-channel Recording**: Supports audio interfaces with multiple inputs, recording each channel into a separate lossless FLAC file.
 - **Playback Engine**: Synchronized multi-track playback of recorded sessions directly from disk.
 - **Digital Mixer**: Real-time Volume (-inf to +6dB) and Pan (L/C/R) control for each track with persistent settings per session.
@@ -49,4 +53,18 @@ python3 gui.py
 The system utilizes **FFmpeg** for high-quality audio capture and **PyAudio** with **Numpy** for low-latency multi-track mixing during playback. Settings are persisted in JSON format (`output_settings.json` for global routing, `mixer.json` for session-specific mixes).
 
 ---
+## 📄 License
+This project is licensed under the **MIT License**. See the [LICENSE](LICENSE) file for details. This means you are free to use, modify, and distribute the code, even for commercial purposes, as long as you include the original copyright notice.
+
+## ☕ Support & Donations
+If you find Recberry useful and would like to support its development, you can:
+- **Donate**: [Buy Me a Coffee](https://buymeacoffee.com/banorz) / [PayPal](https://paypal.me/ValerioLibera)
+- **Contribute**: Feel free to open issues or submit pull requests!
+
+## 🛠️ Get a Ready-to-Use Unit
+Don't want to deal with assembly and configuration? I offer **pre-assembled, tested, and ready-to-use Recberry units**.
+- Includes: Raspberry Pi, configured OS, 3.5" touchscreen, and optional cases.
+- Hand-assembled and quality-tested.
+- For info and pricing: [Contact me](mailto:contact@valeriolibera.it)
+
 Developed with ❤️ for Raspberry Pi.

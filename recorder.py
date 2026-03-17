@@ -16,7 +16,7 @@ RECORDER_LOG_PATH = os.path.expanduser("~/recorder/recorder.log")
 MAX_LOG_SIZE = 16 * 1024 * 1024  # 16 MB
 # --- Configuration ---
 KEYBOARD_DEVICE_PATH = "/dev/input/by-id/usb-1189_8890-event-kbd"
-FALLBACK_STORAGE_PATH = "/home/banorz/recordings"
+FALLBACK_STORAGE_PATH = os.path.expanduser("~/recordings")
 USB_MOUNT_POINT = "/mnt/usbrecorder"
 
 # --- Stato globale ---
