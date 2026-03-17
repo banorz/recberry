@@ -6,7 +6,12 @@
 </p>
 
 ## 🚀 Project Purpose
-The goal of Recberry is to transform a Raspberry Pi into a professional "plug-and-play" audio workstation. The system automatically detects connected USB audio interfaces, allows for real-time level monitoring, and ensures recording continuity with automatic storage fallback. It now includes a full-featured playback and mixing engine to review sessions in the field.
+The goal of Recberry is to transform a Raspberry Pi into an advanced standalone audio recorder via USB interface. It is specifically designed for reliable multi-track recording and field monitoring, rather than being a general-purpose digital audio workstation (DAW).
+
+## 💡 Use Cases
+- **Band Rehearsals & Live Concerts**: Record from a USB mixer without a computer. Supports multi-track recording (if supported by hardware) and saves to SD, USB sticks, or external HDDs. Its small footprint makes it ideal for live environments.
+- **Conferences & Lectures**: Connect a USB microphone directly to Recberry (can be battery-powered) to record without using phone storage. Listen back later via headphones connected to the USB or Pi audio output.
+- **Collaborative Growth**: We are constantly adding new features and evolving the list of use cases together!
 
 ## ⚠️ Hardware Disclaimer
 This system has been exclusively tested with **3.5" SPI LCD displays** (like the WaveShare tft35a overlay) with a native resolution of **480x320**. While it might work on other displays, the UI layout is strictly optimized for these specific screen dimensions and aspect ratio.
