@@ -8,7 +8,10 @@ import tkinter as tk
 from tkinter import font
 import time
 import recorder
+import player
 import random
+import threading
+import numpy as np
 
 class RecorderApp:
     def __init__(self, root):
@@ -22,6 +25,7 @@ class RecorderApp:
         self.button_color = "#4A4A4A"
         self.status_font = font.Font(family="Helvetica", size=24, weight="bold")
         self.button_font = font.Font(family="Helvetica", size=20)
+        self.medium_font = font.Font(family="Helvetica", size=15)
         self.log_font = font.Font(family="Helvetica", size=12)
         self.input_font = font.Font(family="Helvetica", size=10, weight="bold")
         self.status = "-"
@@ -43,6 +47,23 @@ class RecorderApp:
         self.refresh_card()
         self.refresh_inputs()
         self.load_input_enabled()  # <-- Prima carica lo stato
+        
+        # Inizializza Player
+        self.player = player.MultiTrackPlayer(samplerate=self.samplerate)
+        self.current_playback_folder = None
+        self.playback_storage = "USB"
+        self.master_vol = 1.0
+        self.seek_timer = None
+        self.seek_direction = 0
+        self.seek_start_time = 0
+        
+        # Output Routing State
+        self.output_settings_path = "output_settings.json"
+        self.output_device_index = None # Default
+        self.output_channels = [0, 1] # Stereo L/R
+        self.current_out_name = "Default"
+        self.out_devices = self.player.get_output_devices()
+
         # Log
         self.log_lines = []
         recorder.set_log_callback(self.append_log)
@@ -50,9 +71,13 @@ class RecorderApp:
         self.last_time = 0
         # Schermate
         self.frames = {}
+        self.load_output_settings()
         self.create_home_screen()
         self.create_inputs_screen()
-        self.create_settings_screen()  # <--- AGGIUNGI QUESTO
+        self.create_settings_screen()
+        self.create_output_screen()
+        self.create_playback_browser_screen()
+        self.create_mixer_screen()
         self.show_frame("home")
 
         self.update_status()
@@ -205,30 +230,18 @@ class RecorderApp:
         frame = tk.Frame(self.root, bg=self.bg_color)
         self.frames["settings"] = frame
 
-        # --- Back Button ---
+        # --- Back Button (Top Left) ---
         back_btn = tk.Button(
             frame, text="Back", command=lambda: self.show_frame("home"),
             font=self.button_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=50, pady=20,
             takefocus=0
         )
-        back_btn.grid(row=0, column=0, sticky="nw", padx=0, pady=0)
+        back_btn.grid(row=0, column=0, sticky="nw", padx=10, pady=10)
 
-        # --- Restart LightDM Button ---
-        restart_frame = tk.Frame(frame, bg=self.bg_color)
-        restart_frame.grid(row=0, column=0, sticky="ne", padx=100, pady=0)  # Posiziona a destra
-
-        self.restart_lightdm_btn = tk.Button(
-            restart_frame, text="Restart GUI", command=self.restart_lightdm,
-            font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
-            takefocus=0
-        )
-        self.restart_lightdm_btn.pack(side=tk.TOP, anchor="ne", padx=0, pady=0)  # Usa pack nel frame
-        
-        # --- Sample Rate Options ---
+        # --- Sample Rate Options (Row 1) ---
         samplerate_frame = tk.Frame(frame, bg=self.bg_color)
-        samplerate_frame.grid(row=1, column=0, pady=20)
+        samplerate_frame.grid(row=1, column=0, pady=10, sticky="ew")
 
-        self.samplerate = self.get_samplerate()
         self.samplerate_44100_btn = tk.Button(
             samplerate_frame, text="44100 Hz", command=lambda: self.set_samplerate(44100),
             font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
@@ -239,16 +252,13 @@ class RecorderApp:
             font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
             takefocus=0
         )
-        self.update_samplerate_buttons()  # Imposta lo stato iniziale dei bottoni
+        self.samplerate_44100_btn.pack(side=tk.LEFT, padx=10)
+        self.samplerate_48000_btn.pack(side=tk.LEFT, padx=10)
 
-        self.samplerate_44100_btn.grid(row=0, column=0, padx=10)
-        self.samplerate_48000_btn.grid(row=0, column=1, padx=10)
-
-        # --- WiFi Options ---
+        # --- WiFi Options (Row 2) ---
         wifi_frame = tk.Frame(frame, bg=self.bg_color)
-        wifi_frame.grid(row=2, column=0, pady=20)
+        wifi_frame.grid(row=2, column=0, pady=10, sticky="ew")
 
-        self.wifi_enabled = True  # Inizializza con lo stato corrente
         self.wifi_enable_btn = tk.Button(
             wifi_frame, text="WiFi Enable", command=self.enable_wifi,
             font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
@@ -259,34 +269,41 @@ class RecorderApp:
             font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
             takefocus=0
         )
-        self.update_wifi_buttons()  # Imposta lo stato iniziale dei bottoni
-
-        self.wifi_enable_btn.grid(row=0, column=0, padx=10)
-        self.wifi_disable_btn.grid(row=0, column=1, padx=10)
+        self.wifi_enable_btn.pack(side=tk.LEFT, padx=10)
+        self.wifi_disable_btn.pack(side=tk.LEFT, padx=10)
 
         self.wifi_ssid_label = tk.Label(
-            wifi_frame, text="SSID: Not Connected", font=self.log_font, bg=self.bg_color, fg="#FFD700"
+            frame, text="SSID: Not Connected", font=self.log_font, bg=self.bg_color, fg="#FFD700"
         )
-        self.wifi_ssid_label.grid(row=1, column=0, columnspan=2, pady=10)
-        self.update_wifi_ssid()  # Aggiorna l'SSID all'avvio
+        self.wifi_ssid_label.grid(row=3, column=0, pady=5)
 
-        # --- System Options (Power/Reboot) ---
+        # --- System Options (Row 4: Reboot, Power Off, Restart GUI) ---
         system_frame = tk.Frame(frame, bg=self.bg_color)
-        system_frame.grid(row=3, column=0, pady=5)
+        system_frame.grid(row=4, column=0, pady=10, sticky="ew")
 
         self.reboot_btn = tk.Button(
             system_frame, text="Reboot", command=self.reboot,
             font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
-            takefocus=0, padx=20
+            takefocus=0, padx=10
         )
         self.poweroff_btn = tk.Button(
             system_frame, text="Power Off", command=self.power_off,
             font=self.button_font, bg="#B22222", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
-            takefocus=0, padx=20
+            takefocus=0, padx=10
         )
+        self.restart_lightdm_btn = tk.Button(
+            system_frame, text="Restart GUI", command=self.restart_lightdm,
+            font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
+            takefocus=0, padx=10
+        )
+        
+        self.reboot_btn.pack(side=tk.LEFT, padx=5)
+        self.poweroff_btn.pack(side=tk.LEFT, padx=5)
+        self.restart_lightdm_btn.pack(side=tk.LEFT, padx=5)
 
-        self.reboot_btn.grid(row=0, column=0, padx=10)
-        self.poweroff_btn.grid(row=0, column=1, padx=10)
+        self.update_samplerate_buttons()
+        self.update_wifi_buttons()
+        self.update_wifi_ssid()
         
     
     # --- SCHERMATE ---
@@ -294,58 +311,598 @@ class RecorderApp:
         frame = tk.Frame(self.root, bg=self.bg_color)
         self.frames["home"] = frame
 
-        top_frame = tk.Frame(frame, bg=self.bg_color)
-        top_frame.pack(fill=tk.X, pady=0)
+        # --- Top Button Bar (Settings, Input, Output, Browse) ---
+        top_bar = tk.Frame(frame, bg="#333")
+        top_bar.pack(fill=tk.X)
 
-        # Pulsante Settings
-        self.settings_button = tk.Button(
-            top_frame, text="Settings", command=lambda: self.show_frame("settings"),
-            font=self.log_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=50, pady=20,
-            takefocus=0
-        )
-        self.settings_button.pack(side=tk.LEFT, anchor="nw")
-
-        self.inputs_button = tk.Button(
-            top_frame, text="Inputs", command=lambda: self.show_frame("inputs"),
-            font=self.log_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=50, pady=20,
-            takefocus=0
-        )
-        self.inputs_button.pack(side=tk.RIGHT, anchor="ne")
+        nav_btns = [
+            ("Settings", "settings"),
+            ("Input", "inputs"),
+            ("Output", "output"),
+            ("Browse", "playback_browser")
+        ]
+        
+        for text, frame_name in nav_btns:
+            btn = tk.Button(
+                top_bar, text=text, command=lambda n=frame_name: self.show_frame(n),
+                font=self.log_font, bg="#444", fg="#FFD700", relief=tk.FLAT, 
+                borderwidth=1, highlightthickness=0, width=10, pady=10
+            )
+            btn.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=3)
+            if text == "Settings":
+                self.settings_button = btn
+            elif text == "Input":
+                self.inputs_button = btn
+            elif text == "Browse":
+                self.playback_button = btn
+            elif text == "Output":
+                self.output_button = btn
 
         self.status_label = tk.Label(
-            top_frame, text="-", font=self.status_font, bg=self.bg_color, fg=self.fg_color, pady=10
+            frame, text="-", font=self.status_font, bg=self.bg_color, fg=self.fg_color
         )
-        self.status_label.pack(anchor="nw", side=tk.TOP, padx=30, pady=10)
+        self.status_label.pack(pady=(12, 0))
+
+        self.device_warning_label = tk.Label(
+            frame, text="USB AUDIO NOT FOUND", font=self.log_font, bg=self.bg_color, fg="#FF4500"
+        )
+        # We'll pack this only when device is missing
 
         self.info_label = tk.Label(
             frame, text="", font=self.log_font, bg=self.bg_color, fg="#FFD700"
         )
-        self.info_label.pack(fill=tk.X)
-        
-        self.device_warning_label = tk.Label(
-            frame, text="USB AUDIO NOT FOUND", font=self.status_font, bg=self.bg_color, fg="#FF4500"
-        )
-        # We'll pack this only when device is missing
+        # We'll pack this only when needed (recording/playback)
 
-        btn_frame = tk.Frame(frame, bg=self.bg_color)
-        btn_frame.pack(fill=tk.X, pady=10)
-
-        # Unico pulsante Start/Stop Recording
+        # Pulsante RECORD (Centrato e più piccolo)
         self.record_button = tk.Button(
-            btn_frame, text="Start Recording", command=self.toggle_recording,
+            frame, text="Start Recording", command=self.toggle_recording,
             font=self.button_font, bg="#008000", fg=self.fg_color,
             activebackground="#006400", activeforeground=self.fg_color,
-            relief=tk.FLAT, borderwidth=0, highlightthickness=0, pady=30,
-            disabledforeground="#666", takefocus=0
+            relief=tk.FLAT, borderwidth=0, highlightthickness=0,
+            disabledforeground="#666", takefocus=0,
+            pady=15, anchor="center"
         )
-        self.record_button.pack(fill=tk.X, padx=30, pady=5)
+        self.record_button.pack(fill=tk.X, padx=100, pady=(6, 0))
 
-        # Label per l'ultimo log (max 2 righe)
-        self.last_log_label = tk.Label(
-            frame, text="", font=self.log_font, bg=self.bg_color, fg="#FFD700",
-            wraplength=440, justify="left"
+        # Area LOG (più spazio e scorrevole)
+        log_frame = tk.Frame(frame, bg="#1a1a1a", borderwidth=0, highlightthickness=0)
+        log_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=(20, 10))
+        
+        self.log_listbox = tk.Listbox(
+            log_frame, font=("Courier", 10), bg="#1a1a1a", fg="#00FF00",
+            relief=tk.FLAT, borderwidth=0, highlightthickness=0,
+            selectborderwidth=0, exportselection=False
         )
-        self.last_log_label.pack(fill=tk.X, padx=10, pady=(5, 0))
+        self.log_listbox.pack(fill=tk.BOTH, expand=True)
+
+        # Inizializza con i log esistenti
+        for line in self.log_lines:
+            self.log_listbox.insert(tk.END, line)
+        self.log_listbox.yview_moveto(1.0)
+
+    def create_output_screen(self):
+        frame = self.frames.get("output")
+        if frame:
+            for widget in frame.winfo_children():
+                widget.destroy()
+        else:
+            frame = tk.Frame(self.root, bg=self.bg_color)
+            self.frames["output"] = frame
+        
+        # Top Bar for Back Button
+        top_bar = tk.Frame(frame, bg="#333")
+        top_bar.pack(fill=tk.X)
+        
+        back_btn = tk.Button(
+            top_bar, text="Back", command=lambda: self.show_frame("home"),
+            font=self.button_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=20, pady=10
+        )
+        back_btn.pack(side=tk.LEFT)
+        
+        main_content = tk.Frame(frame, bg=self.bg_color)
+        main_content.pack(fill=tk.BOTH, expand=True, pady=5)
+        
+        # Spacer to ensure visibility
+        tk.Label(main_content, bg=self.bg_color).pack(pady=5)
+
+        self.out_device_info_label = tk.Label(
+            main_content, text=f"Output: {self.current_out_name}", 
+            font=self.medium_font, bg=self.bg_color, fg="#FFD700"
+        )
+        self.out_device_info_label.pack(pady=2)
+
+        self.out_channels_info_label = tk.Label(
+            main_content, text=f"Channels: {self.output_channels[0]+1}, {self.output_channels[1]+1}", 
+            font=self.medium_font, bg=self.bg_color, fg="#FFD700"
+        )
+        self.out_channels_info_label.pack(pady=2)
+
+        btn_style = {"font": self.button_font, "bg": "#4A4A4A", "fg": self.fg_color, "relief": tk.FLAT, "pady": 15}
+
+        tk.Button(
+            main_content, text="Select Output Device", command=self.show_device_picker,
+            **btn_style
+        ).pack(fill=tk.X, padx=50, pady=10)
+
+        tk.Button(
+            main_content, text="Select Output Channels", command=self.show_channel_picker,
+            **btn_style
+        ).pack(fill=tk.X, padx=50, pady=10)
+
+    def show_device_picker(self):
+        self.out_devices = self.player.get_output_devices()
+        picker = tk.Toplevel(self.root)
+        picker.overrideredirect(True)
+        # Full screen 480x320
+        picker.geometry("480x320+0+0")
+        picker.configure(bg=self.bg_color, highlightthickness=0, bd=0)
+        picker.grab_set()
+        
+        tk.Label(picker, text="AVAILABLE DEVICES", font=self.medium_font, bg=self.bg_color, fg="#FFD700", highlightthickness=0, bd=0).pack(pady=5)
+        
+        list_frame = tk.Frame(picker, bg=self.bg_color, highlightthickness=0, bd=0)
+        list_frame.pack(fill=tk.BOTH, expand=True)
+        
+        scrollbar = tk.Scrollbar(list_frame, width=45, bg="#444", troughcolor=self.bg_color, highlightthickness=0, borderwidth=0)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        lb = tk.Listbox(
+            list_frame, font=self.medium_font, bg="#333", fg="#FFF", 
+            yscrollcommand=scrollbar.set, relief=tk.FLAT, borderwidth=0,
+            highlightthickness=0, selectbackground="#FFD700", selectforeground="#000"
+        )
+        for d in self.out_devices:
+            lb.insert(tk.END, f"{d['index']}: {d['name']}")
+        lb.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.config(command=lb.yview)
+
+        def on_select():
+            sel = lb.curselection()
+            if sel:
+                d = self.out_devices[sel[0]]
+                self.output_device_index = d['index']
+                self.player.set_output_routing(self.output_device_index, self.output_channels)
+                self.out_device_info_label.config(text=f"Output: {d['name']}")
+                self.save_output_settings()
+                picker.destroy()
+        
+        tk.Button(picker, text="SELECT DEVICE", command=on_select, font=self.button_font, bg="#008000", fg="#FFF", pady=50).pack(fill=tk.X, padx=2, pady=2)
+
+    def show_channel_picker(self):
+        picker = tk.Toplevel(self.root)
+        picker.overrideredirect(True)
+        picker.geometry("480x320+0+0")
+        picker.configure(bg=self.bg_color, highlightthickness=0, bd=0)
+        picker.grab_set()
+        
+        # Get max channels for current device
+        max_ch = 2
+        active_idx = self.output_device_index
+        for d in self.out_devices:
+            if d['index'] == active_idx:
+                max_ch = d['channels']
+                break
+
+        # Variables for touch adjustment
+        l_var = tk.IntVar(value=self.output_channels[0])
+        r_var = tk.IntVar(value=self.output_channels[1])
+
+        def step_ch(var, delta, limit):
+            val = var.get() + delta
+            if 0 <= val < limit:
+                var.set(val)
+
+        tk.Label(picker, text=f"SELECT CHANNELS (0-{max_ch-1})", font=self.medium_font, bg=self.bg_color, fg="#FFD700").pack(pady=10)
+
+        # Container for both selectors
+        selectors_frame = tk.Frame(picker, bg=self.bg_color, highlightthickness=0)
+        selectors_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Style for +/- buttons
+        step_btn_style = {"font": self.button_font, "bg": "#444", "fg": "#FFD700", "width": 3, "relief": tk.FLAT}
+
+        # LEFT Channel Selector
+        l_frame = tk.Frame(selectors_frame, bg=self.bg_color, highlightthickness=0)
+        l_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH, padx=10)
+        tk.Label(l_frame, text="LEFT", font=self.log_font, bg=self.bg_color, fg="#FFF").pack()
+        
+        tk.Button(l_frame, text="+", command=lambda: step_ch(l_var, 1, max_ch), **step_btn_style).pack(pady=2)
+        tk.Label(l_frame, textvariable=l_var, font=self.button_font, bg=self.bg_color, fg="#FFD700").pack(pady=2)
+        tk.Button(l_frame, text="-", command=lambda: step_ch(l_var, -1, max_ch), **step_btn_style).pack(pady=2)
+
+        # RIGHT Channel Selector
+        r_frame = tk.Frame(selectors_frame, bg=self.bg_color, highlightthickness=0)
+        r_frame.pack(side=tk.LEFT, expand=True, fill=tk.BOTH, padx=10)
+        tk.Label(r_frame, text="RIGHT", font=self.log_font, bg=self.bg_color, fg="#FFF").pack()
+        
+        tk.Button(r_frame, text="+", command=lambda: step_ch(r_var, 1, max_ch), **step_btn_style).pack(pady=2)
+        tk.Label(r_frame, textvariable=r_var, font=self.button_font, bg=self.bg_color, fg="#FFD700").pack(pady=2)
+        tk.Button(r_frame, text="-", command=lambda: step_ch(r_var, -1, max_ch), **step_btn_style).pack(pady=2)
+
+        def on_save():
+            l = l_var.get()
+            r = r_var.get()
+            self.output_channels = [l, r]
+            self.player.set_output_routing(active_idx, self.output_channels)
+            self.out_channels_info_label.config(text=f"Channels: {l+1}, {r+1}")
+            self.save_output_settings()
+            picker.destroy()
+        
+        tk.Button(picker, text="SAVE CHANNELS", command=on_save, font=self.button_font, bg="#008000", fg="#FFF", pady=30).pack(fill=tk.X, padx=5, pady=5)
+
+    def create_playback_browser_screen(self):
+        frame = tk.Frame(self.root, bg=self.bg_color)
+        self.frames["playback_browser"] = frame
+        
+        # Header
+        header = tk.Frame(frame, bg=self.bg_color)
+        header.pack(fill=tk.X)
+        
+        tk.Button(
+            header, text="Back", command=lambda: self.show_frame("home"),
+            font=self.button_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=30, pady=10
+        ).pack(side=tk.LEFT)
+        
+        tk.Label(header, text="Select Session", font=self.button_font, bg=self.bg_color, fg=self.fg_color).pack(side=tk.LEFT, padx=20)
+        
+        # Storage Toggle
+        self.storage_toggle_btn = tk.Button(
+            header, text="Source: USB", command=self.toggle_playback_storage,
+            font=self.log_font, bg="#4A4A4A", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=20
+        )
+        self.storage_toggle_btn.pack(side=tk.RIGHT, padx=10)
+        
+        # Listbox with Scrollbar
+        list_frame = tk.Frame(frame, bg=self.bg_color)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        self.session_listbox = tk.Listbox(
+            list_frame, font=self.log_font, bg="#1e2419", fg=self.fg_color, 
+            selectbackground="#FFD700", selectforeground="#000", borderwidth=0, highlightthickness=0
+        )
+        self.session_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar = tk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.session_listbox.yview)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.session_listbox.config(yscrollcommand=scrollbar.set)
+        
+        # Open Button
+        self.open_mixer_btn = tk.Button(
+            frame, text="Open Mixer", command=self.open_mixer,
+            font=self.button_font, bg="#008000", fg=self.fg_color, relief=tk.FLAT, pady=10
+        )
+        self.open_mixer_btn.pack(fill=tk.X, padx=30, pady=10)
+
+    def toggle_playback_storage(self):
+        if self.playback_storage == "USB":
+            # Switch to SD
+            self.playback_storage = "SD"
+            recorder.unmount_usb_drive()
+        else:
+            # Switch to USB
+            recorder.log("Playback: Attempting to mount USB...")
+            if recorder.mount_usb_drive():
+                self.playback_storage = "USB"
+            else:
+                recorder.log("Playback: USB mount failed, staying on SD.")
+                self.playback_storage = "SD"
+        
+        self.update_storage_button_text()
+        self.refresh_session_list()
+
+    def update_storage_button_text(self):
+        self.storage_toggle_btn.config(text=f"Source: {self.playback_storage}")
+
+    def refresh_session_list(self):
+        self.session_listbox.delete(0, tk.END)
+        
+        # If USB selected but not mounted, fallback to SD
+        if self.playback_storage == "USB" and not os.path.ismount(recorder.USB_MOUNT_POINT):
+            self.playback_storage = "SD"
+            self.update_storage_button_text()
+            recorder.log("USB not mounted, falling back to SD for playback.")
+
+        base = recorder.USB_MOUNT_POINT if self.playback_storage == "USB" else recorder.FALLBACK_STORAGE_PATH
+        
+        if os.path.exists(base):
+            for folder in sorted(os.listdir(base), reverse=True):
+                if folder.startswith("recording_"):
+                    self.session_listbox.insert(tk.END, folder)
+
+    def open_mixer(self):
+        selection = self.session_listbox.curselection()
+        if not selection:
+            return
+        
+        folder_name = self.session_listbox.get(selection[0])
+        # Find path
+        folder_path = None
+        for base in [recorder.USB_MOUNT_POINT, recorder.FALLBACK_STORAGE_PATH]:
+            p = os.path.join(base, folder_name)
+            if os.path.exists(p):
+                folder_path = p
+                break
+        
+        if folder_path:
+            self.current_playback_folder = folder_path
+            self.open_mixer_btn.config(text="Loading...", state=tk.DISABLED)
+            
+            # Use a thread to avoid freezing the GUI
+            def load_task():
+                try:
+                    self.player.load_folder(folder_path)
+                except Exception as e:
+                    recorder.log(f"Error loading session: {e}")
+                
+                # Update UI in main thread
+                self.root.after(0, self.finish_open_mixer)
+            
+            threading.Thread(target=load_task, daemon=True).start()
+
+    def finish_open_mixer(self):
+        self.open_mixer_btn.config(text="Open Mixer", state=tk.NORMAL)
+        # Load mixer settings if mixer.json exists
+        settings_path = os.path.join(self.current_playback_folder, "mixer.json")
+        if os.path.exists(settings_path):
+            try:
+                with open(settings_path, "r") as f:
+                    data = json.load(f)
+                master_vol = data.get("master_volume", 1.0)
+                self.adjust_master_vol(master_vol - self.master_vol)
+                track_settings = data.get("tracks", [])
+                for i, t_data in enumerate(track_settings):
+                    if i < len(self.player.tracks):
+                        self.player.set_track_volume(i, t_data.get("volume", 0.8))
+                        self.player.set_track_pan(i, t_data.get("pan", 0.0))
+            except Exception as e:
+                print(f"Error loading mixer.json: {e}")
+        
+        self.show_frame("mixer")
+        self.refresh_mixer_ui()
+
+    def create_mixer_screen(self):
+        frame = tk.Frame(self.root, bg=self.bg_color)
+        self.frames["mixer"] = frame
+        
+        # --- TOP BAR ---
+        top_bar = tk.Frame(frame, bg=self.bg_color)
+        top_bar.pack(fill=tk.X)
+        
+        tk.Button(
+            top_bar, text="Back", command=self.stop_and_back,
+            font=self.log_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=15, pady=8
+        ).pack(side=tk.LEFT)
+        
+        self.play_btn = tk.Button(
+            top_bar, text="Play", command=self.toggle_playback,
+            font=self.log_font, bg="#008000", fg=self.fg_color, relief=tk.FLAT, borderwidth=0, padx=15, pady=8
+        )
+        self.play_btn.pack(side=tk.LEFT, padx=5)
+
+        # Track Scroll (Top Center)
+        track_scroll_frame = tk.Frame(top_bar, bg=self.bg_color)
+        track_scroll_frame.pack(side=tk.LEFT, expand=True)
+        
+        tk.Button(
+            track_scroll_frame, text="<<", command=lambda: self.mixer_canvas.xview_scroll(-1, 'pages'),
+            font=self.log_font, bg="#333", fg="#FFD700", relief=tk.FLAT, borderwidth=1, padx=10
+        ).pack(side=tk.LEFT, padx=2)
+        
+        tk.Button(
+            track_scroll_frame, text=">>", command=lambda: self.mixer_canvas.xview_scroll(1, 'pages'),
+            font=self.log_font, bg="#333", fg="#FFD700", relief=tk.FLAT, borderwidth=1, padx=10
+        ).pack(side=tk.LEFT, padx=2)
+
+        # Master Volume (Top Right)
+        master_vol_frame = tk.Frame(top_bar, bg=self.bg_color)
+        master_vol_frame.pack(side=tk.RIGHT, padx=5)
+        
+        tk.Button(
+            master_vol_frame, text="-", command=lambda: self.adjust_master_vol(-0.05),
+            font=self.log_font, bg="#444", fg="#FFD700", relief=tk.FLAT, width=3
+        ).pack(side=tk.LEFT)
+        
+        self.master_vol_label = tk.Label(master_vol_frame, text="0dB", font=self.log_font, bg=self.bg_color, fg="#FFD700", width=6)
+        self.master_vol_label.pack(side=tk.LEFT)
+        
+        tk.Button(
+            master_vol_frame, text="+", command=lambda: self.adjust_master_vol(0.05),
+            font=self.log_font, bg="#444", fg="#FFD700", relief=tk.FLAT, width=3
+        ).pack(side=tk.LEFT)
+        
+        # --- BOTTOM BAR ---
+        bottom_bar = tk.Frame(frame, bg=self.bg_color, height=60)
+        bottom_bar.pack(side=tk.BOTTOM, fill=tk.X)
+        bottom_bar.pack_propagate(False)
+
+        # Seek Left (Backward)
+        self.seek_back_btn = tk.Button(
+            bottom_bar, text="<<", font=self.button_font, bg="#444", fg="#FFD700", relief=tk.FLAT, width=6
+        )
+        self.seek_back_btn.pack(side=tk.LEFT, padx=15, fill=tk.Y, pady=5)
+        self.seek_back_btn.bind("<ButtonPress-1>", lambda e: self.start_seek(-1))
+        self.seek_back_btn.bind("<ButtonRelease-1>", lambda e: self.stop_seek())
+
+        # Time Display (Center)
+        self.time_label = tk.Label(bottom_bar, text="00:00:00 / 00:00:00", font=self.log_font, bg=self.bg_color, fg="#FFD700")
+        self.time_label.pack(side=tk.LEFT, expand=True)
+
+        # Seek Right (Forward)
+        self.seek_fwd_btn = tk.Button(
+            bottom_bar, text=">>", font=self.button_font, bg="#444", fg="#FFD700", relief=tk.FLAT, width=6
+        )
+        self.seek_fwd_btn.pack(side=tk.RIGHT, padx=15, fill=tk.Y, pady=5)
+        self.seek_fwd_btn.bind("<ButtonPress-1>", lambda e: self.start_seek(1))
+        self.seek_fwd_btn.bind("<ButtonRelease-1>", lambda e: self.stop_seek())
+        
+        # --- MIXER AREA ---
+        mixer_container = tk.Frame(frame, bg=self.bg_color)
+        mixer_container.pack(fill=tk.BOTH, expand=True)
+        
+        self.mixer_canvas = tk.Canvas(mixer_container, bg=self.bg_color, highlightthickness=0)
+        self.mixer_canvas.pack(side=tk.TOP, fill=tk.BOTH, expand=True)
+        
+        self.mixer_inner = tk.Frame(self.mixer_canvas, bg=self.bg_color)
+        self.mixer_canvas.create_window((0, 0), window=self.mixer_inner, anchor="nw")
+
+    def adjust_master_vol(self, delta):
+        self.master_vol = max(0.0, min(2.0, self.master_vol + delta))
+        self.player.set_master_volume(self.master_vol)
+        # dB = 20 * log10(lin)
+        if self.master_vol > 0:
+            db = 20 * np.log10(self.master_vol)
+            self.master_vol_label.config(text=f"{db:+.1f}dB")
+        else:
+            self.master_vol_label.config(text="-inf dB")
+
+    def start_seek(self, direction):
+        self.seek_direction = direction
+        self.seek_start_time = time.time()
+        # Initial jump (15s)
+        self.player.seek(self.player.get_current_time() + (direction * 15))
+        self.update_playback_time()
+        # Start repeat
+        self.seek_timer = self.root.after(500, self.do_seek)
+
+    def do_seek(self):
+        if self.seek_direction == 0:
+            return
+        
+        elapsed = time.time() - self.seek_start_time
+        # Accelerated seek: 30s (<5s), 60s (<10s), 300s/5min (>=10s)
+        if elapsed < 5:
+            step = 30
+        elif elapsed < 10:
+            step = 60
+        else:
+            step = 300
+        
+        self.player.seek(self.player.get_current_time() + (self.seek_direction * step))
+        self.update_playback_time()
+        self.seek_timer = self.root.after(500, self.do_seek)
+
+    def stop_seek(self):
+        self.seek_direction = 0
+        if self.seek_timer:
+            self.root.after_cancel(self.seek_timer)
+            self.seek_timer = None
+
+    def update_playback_time(self):
+        curr = self.player.get_current_time()
+        total = self.player.get_total_time()
+        self.time_label.config(text=f"{self.format_time(curr)} / {self.format_time(total)}")
+        if self.player.is_playing:
+            self.root.after(500, self.update_playback_time)
+
+    def format_time(self, seconds):
+        h = int(seconds // 3600)
+        m = int((seconds % 3600) // 60)
+        s = int(seconds % 60)
+        return f"{h:02d}:{m:02d}:{s:02d}"
+        
+    def refresh_mixer_ui(self):
+        for widget in self.mixer_inner.winfo_children():
+            widget.destroy()
+            
+        for i, track in enumerate(self.player.tracks):
+            track_frame = tk.Frame(self.mixer_inner, bg="#3d4735", highlightthickness=1, highlightbackground="#555", padx=5, pady=5)
+            track_frame.pack(side=tk.LEFT, fill=tk.Y, padx=2)
+            
+            tk.Label(track_frame, text=f"CH {i+1}", font=self.input_font, bg="#3d4735", fg="#FFD700").pack()
+            
+            # Volume Slider (Vertical)
+            vol_scale = tk.Scale(
+                track_frame, from_=1.0, to=0.0, resolution=0.05, 
+                orient=tk.VERTICAL, length=120, bg="#3d4735", fg=self.fg_color,
+                highlightthickness=0, borderwidth=0, command=lambda v, idx=i: self.set_mixer_param(idx, 'volume', float(v))
+            )
+            vol_scale.set(track['volume'])
+            vol_scale.pack(pady=5)
+            
+            # Pan Slider (Horizontal)
+            pan_scale = tk.Scale(
+                track_frame, from_=-1.0, to=1.0, resolution=0.1,
+                orient=tk.HORIZONTAL, label="Pan", length=60, bg="#3d4735", fg=self.fg_color,
+                highlightthickness=0, borderwidth=0, command=lambda v, idx=i: self.set_mixer_param(idx, 'pan', float(v))
+            )
+            pan_scale.set(track['pan'])
+            pan_scale.pack()
+            
+        self.mixer_inner.update_idletasks()
+        self.mixer_canvas.config(scrollregion=self.mixer_canvas.bbox("all"))
+
+    def set_mixer_param(self, index, key, value):
+        if key == 'volume':
+            self.player.set_track_volume(index, value)
+        elif key == 'pan':
+            self.player.set_track_pan(index, value)
+        self.save_mixer_settings()
+
+    def save_output_settings(self):
+        try:
+            settings = {
+                "device_index": self.output_device_index,
+                "channels": self.output_channels
+            }
+            with open(self.output_settings_path, "w") as f:
+                json.dump(settings, f)
+            recorder.log("Output settings saved.")
+        except Exception as e:
+            recorder.log(f"Error saving output settings: {e}")
+
+    def load_output_settings(self):
+        try:
+            if os.path.exists(self.output_settings_path):
+                with open(self.output_settings_path, "r") as f:
+                    settings = json.load(f)
+                self.output_device_index = settings.get("device_index")
+                self.output_channels = settings.get("channels", [0, 1])
+                
+                # Apply to player
+                self.player.set_output_routing(self.output_device_index, self.output_channels)
+                
+                # Update current device name for UI display
+                devices = self.player.get_output_devices()
+                self.out_devices = devices
+                for d in devices:
+                    if d['index'] == self.output_device_index:
+                        self.current_out_name = d['name']
+                        break
+                recorder.log(f"Output settings loaded: Device {self.output_device_index}, Ch {self.output_channels}")
+        except Exception as e:
+            recorder.log(f"Error loading output settings: {e}")
+
+    def save_mixer_settings(self):
+        if not self.current_playback_folder:
+            return
+        settings_path = os.path.join(self.current_playback_folder, "mixer.json")
+        try:
+            data = {
+                "master_volume": self.master_vol,
+                "tracks": [{"volume": t["volume"], "pan": t["pan"]} for t in self.player.tracks]
+            }
+            with open(settings_path, "w") as f:
+                json.dump(data, f)
+        except Exception as e:
+            print(f"Error saving mixer.json: {e}")
+
+    def toggle_playback(self):
+        if self.player.is_playing:
+            self.player.pause()
+            self.play_btn.config(text="Play", bg="#008000")
+        else:
+            self.player.play()
+            self.play_btn.config(text="Pause", bg="#B22222")
+            self.update_playback_time() # Restart the time update loop
+
+    def stop_and_back(self):
+        self.player.stop()
+        if hasattr(self, "play_btn"):
+            self.play_btn.config(text="Play", bg="#008000")
+        if hasattr(self, "time_label"):
+            self.update_playback_time() # Final update to 0:00:00
+        self.show_frame("playback_browser")
+
 
     def create_inputs_screen(self):
         # Invece di distruggere l'intero frame (che causa problemi di visualizzazione), 
@@ -491,8 +1048,23 @@ class RecorderApp:
                 self.refresh_inputs()
                 self.update_inputs_screen()
                 self.monitor_audio_levels()
+        elif name == "output":
+            self.create_output_screen()
+        elif name == "playback_browser":
+            self.refresh_session_list()
+        elif name == "mixer":
+            self.update_playback_time()
         else:
             self.audio_monitoring = False
+            # Se usciamo dai frame di playback (galleria o mixer), smontiamo USB
+            if self.player.is_playing:
+                self.player.stop()
+                if hasattr(self, "play_btn"):
+                    self.play_btn.config(text="Play", bg="#008000")
+            
+            if name == "home" and self.playback_storage == "USB":
+                recorder.unmount_usb_drive()
+        
         if name == "settings":
             self.update_samplerate_buttons()
             self.update_wifi_buttons()
@@ -502,14 +1074,14 @@ class RecorderApp:
     # mostro solo gli ultimi 150 caratteri 
     def append_log(self, msg):
         self.log_lines.append(msg)
-        if len(self.log_lines) > 100:
-            self.log_lines = self.log_lines[-100:]
-        # Aggiorna la label con l'ultimo messaggio (max 2 righe) 
-        last = "\n".join(self.log_lines[-10:])
-        if len(last) > 100:
-            last = last[-150:]
-        if hasattr(self, "last_log_label"):
-            self.last_log_label.config(text=last)
+        if len(self.log_lines) > 50:
+            self.log_lines = self.log_lines[-50:]
+            
+        if hasattr(self, "log_listbox"):
+            self.log_listbox.insert(tk.END, msg)
+            if self.log_listbox.size() > 50:
+                self.log_listbox.delete(0)
+            self.log_listbox.yview_moveto(1.0)
 
     # --- INPUTS ---
     def toggle_input(self, idx):
@@ -614,19 +1186,41 @@ class RecorderApp:
             drive = "USB" if getattr(recorder, "current_storage", None) == "USB" else "SD"
             formatted_elapsed = self.format_duration(self.recording_time)
             self.info_label.config(text=f"Rec on {drive} | {formatted_elapsed}")
+            if not self.info_label.winfo_viewable():
+                # Try to pack it after warning, or status
+                target = self.device_warning_label if self.device_warning_label.winfo_viewable() else self.status_label
+                self.info_label.pack(after=target, pady=(6, 0))
         else:
+            if self.info_label.winfo_viewable():
+                self.info_label.pack_forget()
             self.info_label.config(text="")
 
     def update_status(self):
+        # Polling dello stato registrazione per pulsanti Home
+        if recorder.is_recording:
+            if self.playback_button.winfo_viewable():
+                self.playback_button.config(state=tk.DISABLED)
+        else:
+            if self.playback_button.winfo_viewable():
+                self.playback_button.config(state=tk.NORMAL)
+
         # Polling della scheda audio
         if not recorder.is_recording:
+            # Auto-fallback to SD if USB is disconnected in browser
+            if self.frames["playback_browser"].winfo_viewable() and self.playback_storage == "USB":
+                if not os.path.ismount(recorder.USB_MOUNT_POINT):
+                    recorder.log("USB disconnected, switching playback view to SD.")
+                    self.playback_storage = "SD"
+                    self.update_storage_button_text()
+                    self.refresh_session_list()
+
             is_connected = recorder.is_device_connected()
             if not is_connected:
                 self.status_label.config(text="DISCONNECTED", fg="#FF4500")
                 if self.record_button['text'] != "NO USB AUDIO":
                     self.record_button.config(text="NO USB AUDIO", state=tk.DISABLED, bg="#4A4A4A")
                 if not self.device_warning_label.winfo_viewable():
-                    self.device_warning_label.pack(after=self.info_label, pady=5)
+                    self.device_warning_label.pack(after=self.status_label, pady=(6, 0))
             else:
                 if self.status == "-" and self.status_label['text'] == "DISCONNECTED":
                     self.status_label.config(text="-", fg=self.fg_color)
@@ -646,13 +1240,15 @@ class RecorderApp:
         self.update_info_label()
         self.root.after(1000, self.update_status)
         
-        # Nascondi/Mostra i pulsanti Settings e Inputs
+        # Nascondi/Mostra i pulsanti Settings, Inputs, Playback
         if recorder.is_recording:
             self.settings_button.pack_forget()
             self.inputs_button.pack_forget()
+            self.playback_button.pack_forget()
         else:
             self.settings_button.pack(side=tk.LEFT, anchor="nw")
             self.inputs_button.pack(side=tk.RIGHT, anchor="ne")
+            self.playback_button.pack(side=tk.RIGHT, anchor="ne", padx=2)
 
 if __name__ == "__main__":
     main_window = tk.Tk()
