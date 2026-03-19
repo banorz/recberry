@@ -1,9 +1,9 @@
-# 🍰 Recberry (Recpie)
+# <img src="logo.png" alt="Recberry Logo" width="30"> Recberry
 **Recberry** is a standalone multi-channel audio recording and playback system based on Raspberry Pi. Designed to be reliable and easy to use on the go, it features a graphical interface optimized for 3.5" touchscreens (480x320) and intelligent storage management.
 
-<p align="center">
-  <img src="logo.png" alt="Recberry Logo" width="200">
-</p>
+![Recberry Preview](preview.gif)
+
+
 
 ## 🚀 Project Purpose
 The goal of Recberry is to transform a Raspberry Pi into an advanced standalone audio recorder via USB interface. It is specifically designed for reliable multi-track recording and field monitoring, rather than being a general-purpose digital audio workstation (DAW).
@@ -24,7 +24,7 @@ Graphic and UI optimizations are highly welcome! If you have ideas for improving
 - **Output Routing**: Advanced selection of output audio devices and stereo channel mapping (L/R) with global persistence.
 - **Touch Interface**: GUI developed in Tkinter, optimized for 480x320 resolution with ultra-large touch targets and scrollable logs.
 - **Failsafe Storage**: Priority saving to USB with automatic fallback to internal SD. Intelligent handling of paths and disk mounting.
-- **Audio Monitoring**: Visual feedback of peak levels for each input channel and dB levels in the mixer.
+- **Audio Monitoring**: Visual feedback of peak levels for each input channel.
 - **System Management**: Sample rate selection (44.1kHz / 48kHz), WiFi management, and system reboot/shutdown directly from the interface.
 
 ## 🛠 Required Hardware

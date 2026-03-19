@@ -16,7 +16,8 @@ import numpy as np
 class RecorderApp:
     def __init__(self, root):
         self.root = root
-        self.root.title("Recberry Controller")
+        self.version = self.get_version()
+        self.root.title(f"Recberry Controller {self.version}")
         self.root.geometry("480x320")
         self.root.resizable(False, False)
 
@@ -81,6 +82,13 @@ class RecorderApp:
         self.show_frame("home")
 
         self.update_status()
+
+    def get_version(self):
+        try:
+            with open(os.path.join(os.path.dirname(__file__), "version.txt"), "r") as f:
+                return f.read().strip()
+        except Exception:
+            return "vUnknown"
 
     def get_samplerate(self):
         return recorder._samplerate if hasattr(recorder, "_samplerate") else 48000
@@ -301,6 +309,10 @@ class RecorderApp:
         self.poweroff_btn.pack(side=tk.LEFT, padx=5)
         self.restart_lightdm_btn.pack(side=tk.LEFT, padx=5)
 
+        # --- Version Label at the bottom ---
+        version_label = tk.Label(frame, text=f"Recberry {self.version}", font=self.log_font, bg=self.bg_color, fg="#888")
+        version_label.grid(row=5, column=0, pady=(15, 0), sticky="s")
+
         self.update_samplerate_buttons()
         self.update_wifi_buttons()
         self.update_wifi_ssid()
@@ -339,7 +351,7 @@ class RecorderApp:
                 self.output_button = btn
 
         self.status_label = tk.Label(
-            frame, text="-", font=self.status_font, bg=self.bg_color, fg=self.fg_color
+            frame, text="", font=self.status_font, bg=self.bg_color, fg=self.fg_color
         )
         self.status_label.pack(pady=(12, 0))
 
