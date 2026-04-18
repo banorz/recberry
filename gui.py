@@ -12,23 +12,32 @@ import player
 import random
 import threading
 import numpy as np
+import datetime
 
 class RecorderApp:
     def __init__(self, root):
         self.root = root
         self.version = self.get_version()
         self.root.title(f"Recberry Controller {self.version}")
-        self.root.geometry("480x320")
-        self.root.resizable(False, False)
+        
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        self.root.geometry(f"{screen_w}x{screen_h}")
+        self.root.attributes("-fullscreen", True)
+        self.root.bind("<Escape>", lambda e: self.root.attributes("-fullscreen", False))
+
+        self.scale = min(screen_w / 480.0, screen_h / 320.0)
+        if self.scale < 1.0:
+            self.scale = 1.0
 
         self.bg_color = "#2c3425"
         self.fg_color = "#FFFFFF"
         self.button_color = "#4A4A4A"
-        self.status_font = font.Font(family="Helvetica", size=24, weight="bold")
-        self.button_font = font.Font(family="Helvetica", size=20)
-        self.medium_font = font.Font(family="Helvetica", size=15)
-        self.log_font = font.Font(family="Helvetica", size=12)
-        self.input_font = font.Font(family="Helvetica", size=10, weight="bold")
+        self.status_font = font.Font(family="Helvetica", size=int(24 * self.scale), weight="bold")
+        self.button_font = font.Font(family="Helvetica", size=int(20 * self.scale))
+        self.medium_font = font.Font(family="Helvetica", size=int(15 * self.scale))
+        self.log_font = font.Font(family="Helvetica", size=int(12 * self.scale))
+        self.input_font = font.Font(family="Helvetica", size=int(10 * self.scale), weight="bold")
         self.status = "-"
         self.root.configure(bg=self.bg_color)
         
@@ -76,12 +85,24 @@ class RecorderApp:
         self.create_home_screen()
         self.create_inputs_screen()
         self.create_settings_screen()
+        self.create_wifi_config_screen()
         self.create_output_screen()
         self.create_playback_browser_screen()
         self.create_mixer_screen()
         self.show_frame("home")
 
         self.update_status()
+        
+        # Operazioni lente spostate dopo l'avvio
+        self.root.after(500, self.deferred_init)
+        self.update_temp()
+
+    def deferred_init(self):
+        self.update_samplerate_buttons()
+        self.update_wifi_buttons()
+        self.update_wifi_ssid()
+        self.refresh_card()
+        self.refresh_inputs()
 
     def get_version(self):
         try:
@@ -96,7 +117,7 @@ class RecorderApp:
     def set_samplerate(self, rate):
         recorder._samplerate = rate
         self.samplerate = rate
-        self.update_samplerate_buttons()
+        self.root.after(0, self.update_samplerate_buttons)
         recorder.log(f"Sample rate set to {rate} Hz")
 
     def update_samplerate_buttons(self):
@@ -267,27 +288,52 @@ class RecorderApp:
         wifi_frame = tk.Frame(frame, bg=self.bg_color)
         wifi_frame.grid(row=2, column=0, pady=10, sticky="ew")
 
+        # Label WiFi:
+        tk.Label(wifi_frame, text="WiFi:", font=self.button_font, bg=self.bg_color, fg="#FFD700").pack(side=tk.LEFT, padx=(10, 5))
+
         self.wifi_enable_btn = tk.Button(
-            wifi_frame, text="WiFi Enable", command=self.enable_wifi,
+            wifi_frame, text="ON", command=self.enable_wifi,
             font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
-            takefocus=0
+            takefocus=0, padx=10
         )
         self.wifi_disable_btn = tk.Button(
-            wifi_frame, text="WiFi Disable", command=self.disable_wifi,
+            wifi_frame, text="OFF", command=self.disable_wifi,
             font=self.button_font, bg="#4A4A4A", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
-            takefocus=0
+            takefocus=0, padx=10
         )
-        self.wifi_enable_btn.pack(side=tk.LEFT, padx=10)
-        self.wifi_disable_btn.pack(side=tk.LEFT, padx=10)
+        self.wifi_config_btn = tk.Button(
+            wifi_frame, text="CONFIG", command=lambda: self.show_frame("wifi_config"),
+            font=self.button_font, bg="#0055AA", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
+            takefocus=0, padx=10
+        )
+        self.wifi_enable_btn.pack(side=tk.LEFT, padx=5)
+        self.wifi_disable_btn.pack(side=tk.LEFT, padx=5)
+        self.wifi_config_btn.pack(side=tk.LEFT, padx=5)
 
         self.wifi_ssid_label = tk.Label(
             frame, text="SSID: Not Connected", font=self.log_font, bg=self.bg_color, fg="#FFD700"
         )
         self.wifi_ssid_label.grid(row=3, column=0, pady=5)
 
-        # --- System Options (Row 4: Reboot, Power Off, Restart GUI) ---
+        # --- Date/Time Options (Row 4) ---
+        datetime_frame = tk.Frame(frame, bg=self.bg_color)
+        datetime_frame.grid(row=4, column=0, pady=10, sticky="ew")
+
+        self.time_display_label = tk.Label(
+            datetime_frame, text="Time: 00/00/00 00:00", 
+            font=self.log_font, bg=self.bg_color, fg="#FFD700"
+        )
+        self.time_display_label.pack(side=tk.LEFT, padx=(10, 10))
+
+        tk.Button(
+            datetime_frame, text="SET TIME", command=self.show_time_picker,
+            font=self.log_font, bg="#0055AA", fg=self.fg_color, relief=tk.FLAT, borderwidth=0,
+            takefocus=0, padx=15
+        ).pack(side=tk.LEFT)
+
+        # --- System Options (Row 5: Reboot, Power Off, Restart GUI) ---
         system_frame = tk.Frame(frame, bg=self.bg_color)
-        system_frame.grid(row=4, column=0, pady=10, sticky="ew")
+        system_frame.grid(row=5, column=0, pady=10, sticky="ew")
 
         self.reboot_btn = tk.Button(
             system_frame, text="Reboot", command=self.reboot,
@@ -311,13 +357,155 @@ class RecorderApp:
 
         # --- Version Label at the bottom ---
         version_label = tk.Label(frame, text=f"Recberry {self.version}", font=self.log_font, bg=self.bg_color, fg="#888")
-        version_label.grid(row=5, column=0, pady=(15, 0), sticky="s")
+        version_label.grid(row=6, column=0, pady=(15, 0), sticky="s")
 
         self.update_samplerate_buttons()
         self.update_wifi_buttons()
-        self.update_wifi_ssid()
+        self.update_clock_label()
+
+        # self.update_wifi_ssid() # Spostato in deferred_init
         
     
+    def update_clock_label(self):
+        # Update clock label if it exists
+        try:
+            if hasattr(self, "time_display_label") and self.time_display_label.winfo_exists():
+                now = datetime.datetime.now()
+                self.time_display_label.config(text=now.strftime("Time: %d/%m/%Y %H:%M:%S"))
+        except Exception:
+            pass
+        
+        # Keep the loop running as long as the app is alive
+        self.root.after(1000, self.update_clock_label)
+
+    def update_temp(self):
+        try:
+            with open("/sys/class/thermal/thermal_zone0/temp", "r") as f:
+                temp_raw = int(f.read())
+                temp_c = temp_raw / 1000.0
+                if hasattr(self, "temp_label") and self.temp_label.winfo_exists():
+                    self.temp_label.config(text=f"CPU: {temp_c:.1f}°C")
+        except Exception:
+            pass
+        # Polling ogni 3 secondi
+        self.root.after(3000, self.update_temp)
+
+    def show_time_picker(self):
+        picker = tk.Toplevel(self.root)
+        picker.overrideredirect(True)
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        picker.geometry(f"{screen_w}x{screen_h}+0+0")
+        picker.configure(bg=self.bg_color)
+        picker.grab_set()
+
+        now = datetime.datetime.now()
+        year = tk.IntVar(value=now.year)
+        month = tk.IntVar(value=now.month)
+        day = tk.IntVar(value=now.day)
+        hour = tk.IntVar(value=now.hour)
+        minute = tk.IntVar(value=now.minute)
+
+        tk.Label(picker, text="SET DATE AND TIME", font=self.medium_font, bg=self.bg_color, fg="#FFD700").pack(pady=10)
+
+        main_frame = tk.Frame(picker, bg=self.bg_color)
+        main_frame.pack(fill=tk.BOTH, expand=True)
+
+        def create_selector(parent, label, var, v_min, v_max):
+            f = tk.Frame(parent, bg=self.bg_color)
+            f.pack(side=tk.LEFT, expand=True)
+            tk.Label(f, text=label, font=self.log_font, bg=self.bg_color, fg="#AAA").pack()
+            tk.Button(f, text="+", font=self.button_font, command=lambda: var.set(var.get()+1 if var.get()<v_max else v_min), bg="#444", fg="#FFF").pack(pady=5)
+            tk.Label(f, textvariable=var, font=self.button_font, bg=self.bg_color, fg="#FFF").pack()
+            tk.Button(f, text="-", font=self.button_font, command=lambda: var.set(var.get()-1 if var.get()>v_min else v_max), bg="#444", fg="#FFF").pack(pady=5)
+
+        create_selector(main_frame, "Year", year, 2024, 2099)
+        create_selector(main_frame, "Month", month, 1, 12)
+        create_selector(main_frame, "Day", day, 1, 31)
+        create_selector(main_frame, "Hour", hour, 0, 23)
+        create_selector(main_frame, "Min", minute, 0, 59)
+
+        def save_time():
+            new_time = f"{year.get():04d}-{month.get():02d}-{day.get():02d} {hour.get():02d}:{minute.get():02d}:00"
+            try:
+                # Imposta ora di sistema
+                subprocess.run(["sudo", "date", "-s", new_time], check=True)
+                # Sincronizza su RTC hardware
+                subprocess.run(["sudo", "hwclock", "-w"], check=True)
+                recorder.log(f"System time updated to: {new_time}")
+            except Exception as e:
+                recorder.log(f"Error setting time: {e}")
+            picker.destroy()
+            self.update_clock_label()
+
+        btn_frame = tk.Frame(picker, bg=self.bg_color)
+        btn_frame.pack(fill=tk.X, pady=20)
+
+        tk.Button(btn_frame, text="CANCEL", command=picker.destroy, font=self.button_font, bg="#B22222", fg="#FFF", padx=40, pady=20).pack(side=tk.LEFT, expand=True)
+        
+        def sync_internet():
+            if sync_btn['state'] == tk.DISABLED: return
+            sync_btn.config(text="...", state=tk.DISABLED)
+            picker.update_idletasks()
+            
+            def do_sync():
+                success = False
+                try:
+                    # 1. Rileva timezone via IP (opzionale ma utile)
+                    tz_res = subprocess.run(["curl", "-s", "http://worldtimeapi.org/api/ip"], capture_output=True, text=True, timeout=5)
+                    if tz_res.returncode == 0:
+                        import json
+                        tz_data = json.loads(tz_res.stdout)
+                        new_tz = tz_data.get("timezone")
+                        if new_tz:
+                            subprocess.run(["sudo", "timedatectl", "set-timezone", new_tz])
+                            recorder.log(f"Timezone updated to {new_tz}")
+
+                    # 2. Abilita temporaneamente NTP
+                    subprocess.run(["sudo", "timedatectl", "set-ntp", "true"], check=True)
+                    # Poll for sync for max 8 seconds
+                    for _ in range(16):
+                        time.sleep(0.5)
+                        res = subprocess.run(["timedatectl", "status"], capture_output=True, text=True)
+                        if "System clock synchronized: yes" in res.stdout:
+                            success = True
+                            break
+                    # Sincronizza su RTC
+                    if success:
+                        subprocess.run(["sudo", "hwclock", "-w"], check=True)
+                        # Aggiorna variabili UI
+                        now = datetime.datetime.now()
+                        year.set(now.year); month.set(now.month); day.set(now.day)
+                        hour.set(now.hour); minute.set(now.minute)
+                except Exception as e:
+                    recorder.log(f"Sync error: {e}")
+                finally:
+                    subprocess.run(["sudo", "timedatectl", "set-ntp", "false"])
+                    
+                self.root.after(0, lambda: self.finish_sync(sync_btn))
+
+            threading.Thread(target=do_sync, daemon=True).start()
+
+        # Verifica stato WiFi per abilitare tasto
+        is_wifi_connected = False
+        try:
+            wifi_status = subprocess.run(["nmcli", "-t", "-f", "ACTIVE", "dev", "wifi"], capture_output=True, text=True).stdout
+            if "yes" in wifi_status.lower():
+                is_wifi_connected = True
+        except: pass
+
+        sync_btn = tk.Button(btn_frame, text="SYNC", command=sync_internet, font=self.button_font, bg="#0055AA", fg="#FFF", padx=40, pady=20)
+        if not is_wifi_connected:
+            sync_btn.config(state=tk.DISABLED, bg="#444")
+        sync_btn.pack(side=tk.LEFT, expand=True)
+
+        tk.Button(btn_frame, text="SAVE", command=save_time, font=self.button_font, bg="#008000", fg="#FFF", padx=40, pady=20).pack(side=tk.LEFT, expand=True)
+
+    def finish_sync(self, btn):
+        if btn.winfo_exists():
+            btn.config(text="SYNC", state=tk.NORMAL)
+        self.update_clock_label()
+
     # --- SCHERMATE ---
     def create_home_screen(self):
         frame = tk.Frame(self.root, bg=self.bg_color)
@@ -387,10 +575,249 @@ class RecorderApp:
         )
         self.log_listbox.pack(fill=tk.BOTH, expand=True)
 
+        # Label Temperatura (in basso)
+        self.temp_label = tk.Label(
+            frame, text="CPU: --°C", font=("Courier", 10), bg=self.bg_color, fg="#888"
+        )
+        self.temp_label.place(relx=1.0, rely=1.0, anchor="se", x=-10, y=-5)
+
         # Inizializza con i log esistenti
         for line in self.log_lines:
             self.log_listbox.insert(tk.END, line)
         self.log_listbox.yview_moveto(1.0)
+
+    def create_wifi_config_screen(self):
+        frame = tk.Frame(self.root, bg=self.bg_color)
+        self.frames["wifi_config"] = frame
+        
+        # --- Header ---
+        header = tk.Frame(frame, bg="#333")
+        header.pack(fill=tk.X)
+        
+        tk.Button(
+            header, text="Back", command=lambda: self.show_frame("settings"),
+            font=self.button_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=20, pady=10
+        ).pack(side=tk.LEFT)
+        
+        tk.Label(header, text="WiFi Networks", font=self.button_font, bg="#333", fg=self.fg_color).pack(side=tk.LEFT, padx=10)
+        
+        tk.Button(
+            header, text="Scan", command=self.scan_wifi_networks,
+            font=self.button_font, bg="#008000", fg=self.fg_color, relief=tk.FLAT, borderwidth=0, padx=20, pady=10
+        ).pack(side=tk.RIGHT)
+        
+        # --- Listbox ---
+        list_frame = tk.Frame(frame, bg=self.bg_color)
+        list_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        self.wifi_listbox = tk.Listbox(
+            list_frame, font=self.medium_font, bg="#222", fg="#FFF",
+            selectbackground="#FFD700", selectforeground="#000", borderwidth=0, highlightthickness=0
+        )
+        self.wifi_listbox.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        
+        scrollbar = tk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.wifi_listbox.yview, width=40)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        self.wifi_listbox.config(yscrollcommand=scrollbar.set)
+        
+        # --- Action Button ---
+        self.wifi_connect_btn = tk.Button(
+            frame, text="Connect", command=self.on_wifi_select,
+            font=self.button_font, bg="#0055AA", fg=self.fg_color, relief=tk.FLAT, pady=10
+        )
+        self.wifi_connect_btn.pack(fill=tk.X, padx=30, pady=(0, 10))
+
+    def scan_wifi_networks(self):
+        self.wifi_listbox.delete(0, tk.END)
+        self.wifi_listbox.insert(tk.END, "Scanning networks...")
+        self.root.update_idletasks()
+        
+        try:
+            result = subprocess.run(["nmcli", "-t", "-f", "SSID,SECURITY,SIGNAL", "dev", "wifi"], capture_output=True, text=True, check=True)
+            self.wifi_listbox.delete(0, tk.END)
+            self.wifi_networks = []
+            
+            for line in result.stdout.splitlines():
+                if line:
+                    parts = line.split(':')
+                    if len(parts) >= 3:
+                        ssid = parts[0].strip()
+                        security = parts[1].strip()
+                        signal = parts[2].strip()
+                        
+                        if ssid: # Ignora reti nascoste senza SSID
+                            # Non aggiungere duplicati con segnale minore
+                            if not any(n['ssid'] == ssid for n in self.wifi_networks):
+                                self.wifi_networks.append({'ssid': ssid, 'sec': security, 'sig': signal})
+            
+            for net in self.wifi_networks:
+                sec_str = "Open" if not net['sec'] else "Secured"
+                self.wifi_listbox.insert(tk.END, f"{net['ssid']} ({sec_str}) - {net['sig']}%")
+                
+        except subprocess.CalledProcessError as e:
+            self.wifi_listbox.delete(0, tk.END)
+            self.wifi_listbox.insert(tk.END, "Failed to scan networks.")
+            recorder.log(f"WiFi scan error: {e.stderr}")
+
+    def on_wifi_select(self):
+        selection = self.wifi_listbox.curselection()
+        if not selection:
+            return
+            
+        selected_index = selection[0]
+        # Salta se è un messaggio di sistema
+        if selected_index >= len(getattr(self, 'wifi_networks', [])):
+            return
+            
+        selected_network = self.wifi_networks[selected_index]
+        ssid = selected_network['ssid']
+        security = selected_network['sec']
+        
+        if security:
+            self.show_osk(ssid)
+        else:
+            self.connect_to_wifi(ssid, "")
+
+    def show_osk(self, ssid):
+        osk = tk.Toplevel(self.root)
+        osk.overrideredirect(True)
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        osk.geometry(f"{screen_w}x{screen_h}+0+0")
+        osk.configure(bg="#222")
+        osk.grab_set()
+
+        password_var = tk.StringVar()
+        layout_var = tk.StringVar(value="lower")  # "lower", "upper", "sym"
+
+        LAYOUTS = {
+            "lower": [
+                ['q','w','e','r','t','y','u','i','o'],
+                ['a','s','d','f','g','h','j','k','l'],
+                ['z','x','c','v','b','n','m','.','@'],
+            ],
+            "upper": [
+                ['Q','W','E','R','T','Y','U','I','O'],
+                ['A','S','D','F','G','H','J','K','L'],
+                ['Z','X','C','V','B','N','M','.','@'],
+            ],
+            "sym": [
+                ['1','2','3','4','5','6','7','8','9'],
+                ['0','!','#','$','%','&','*','(',')'],
+                ['_','-','+','=','[',']','{','}','@'],
+            ],
+        }
+
+        # --- Header / Display ---
+        header = tk.Frame(osk, bg="#333")
+        header.pack(fill=tk.X)
+        tk.Label(header, text=f"{ssid}:", font=self.log_font, bg="#333", fg="#AAA").pack(side=tk.LEFT, padx=6)
+        entry = tk.Entry(header, textvariable=password_var, font=self.medium_font)  # password in chiaro
+        entry.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=6, pady=4)
+
+        # --- Keys area ---
+        keys_frame = tk.Frame(osk, bg="#222")
+        keys_frame.pack(fill=tk.BOTH, expand=True)
+
+        # Configure 9 columns + 3 rows (no DEL in grid)
+        for col in range(9):
+            keys_frame.columnconfigure(col, weight=1)
+        for row in range(3):
+            keys_frame.rowconfigure(row, weight=1)
+
+        def press(key):
+            if key == 'DEL':
+                password_var.set(password_var.get()[:-1])
+            else:
+                password_var.set(password_var.get() + key)
+
+        def draw_layout(layout_name):
+            for widget in keys_frame.winfo_children():
+                widget.destroy()
+            for r, row in enumerate(LAYOUTS[layout_name]):
+                for c, key in enumerate(row):
+                    tk.Button(
+                        keys_frame, text=key, command=lambda k=key: press(k),
+                        font=self.medium_font, bg="#3A3A3A", fg="#FFF",
+                        relief=tk.FLAT, borderwidth=1
+                    ).grid(row=r, column=c, sticky="nsew", padx=1, pady=1)
+
+        draw_layout("lower")
+
+        def switch_layout(name):
+            layout_var.set(name)
+            draw_layout(name)
+            # Aggiorna colori tasti switch
+            lower_btn.config(bg="#0055AA" if name == "lower" else "#444")
+            upper_btn.config(bg="#0055AA" if name == "upper" else "#444")
+            sym_btn.config(bg="#0055AA" if name == "sym" else "#444")
+
+        # --- Bottom bar: tasti grandi, facili da toccare ---
+        bottom = tk.Frame(osk, bg="#111")
+        bottom.pack(fill=tk.X)
+        for col in range(10):
+            bottom.columnconfigure(col, weight=1)
+
+        bs = {"font": self.button_font, "fg": "#FFF", "relief": tk.FLAT}
+
+        lower_btn = tk.Button(bottom, text="abc", command=lambda: switch_layout("lower"), bg="#0055AA", **bs)
+        lower_btn.grid(row=0, column=0, sticky="nsew", padx=1, pady=5)
+
+        upper_btn = tk.Button(bottom, text="ABC", command=lambda: switch_layout("upper"), bg="#444", **bs)
+        upper_btn.grid(row=0, column=1, sticky="nsew", padx=1, pady=5)
+
+        sym_btn = tk.Button(bottom, text="123?", command=lambda: switch_layout("sym"), bg="#444", **bs)
+        sym_btn.grid(row=0, column=2, sticky="nsew", padx=1, pady=5)
+
+        tk.Button(bottom, text="DEL", command=lambda: press("DEL"),
+                  bg="#555", fg="#FF8888", font=self.button_font, relief=tk.FLAT).grid(
+            row=0, column=3, columnspan=2, sticky="nsew", padx=1, pady=5)
+
+        tk.Button(bottom, text="Annulla", command=osk.destroy, bg="#8B0000", **bs).grid(
+            row=0, column=5, columnspan=2, sticky="nsew", padx=1, pady=5)
+
+        tk.Button(bottom, text="Connetti",
+                  command=lambda: [osk.destroy(), self.connect_to_wifi(ssid, password_var.get())],
+                  bg="#005500", **bs).grid(row=0, column=7, columnspan=3, sticky="nsew", padx=1, pady=5)
+
+    def connect_to_wifi(self, ssid, password):
+        self.wifi_connect_btn.config(text="Connecting...", state=tk.DISABLED)
+        self.root.update_idletasks()
+        
+        def _connect():
+            try:
+                if password:
+                    cmd = ["nmcli", "dev", "wifi", "connect", ssid, "password", password]
+                else:
+                    cmd = ["nmcli", "dev", "wifi", "connect", ssid]
+                
+                # Run connection (Auto-saves the profile by default)
+                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
+                
+                if result.returncode == 0:
+                    recorder.log(f"Successfully connected to {ssid}")
+                    self.root.after(0, lambda: self.finish_wifi_connect(True, "Connected"))
+                else:
+                    recorder.log(f"Failed to connect to {ssid}: {result.stderr}")
+                    self.root.after(0, lambda: self.finish_wifi_connect(False, "Failed"))
+            except subprocess.TimeoutExpired:
+                 recorder.log(f"Connection to {ssid} timed out.")
+                 self.root.after(0, lambda: self.finish_wifi_connect(False, "Timeout"))
+            except Exception as e:
+                recorder.log(f"Connection error: {str(e)}")
+                self.root.after(0, lambda: self.finish_wifi_connect(False, "Error"))
+
+        threading.Thread(target=_connect, daemon=True).start()
+
+    def finish_wifi_connect(self, success, msg):
+        self.wifi_connect_btn.config(text="Connect", state=tk.NORMAL)
+        if success:
+            self.show_frame("settings")
+            # Update SSID on settings screen
+            self.update_wifi_ssid()
+        else:
+            self.wifi_listbox.insert(tk.END, f"Connection {msg}!")
+            self.wifi_listbox.yview_moveto(1.0)
 
     def create_output_screen(self):
         frame = self.frames.get("output")
@@ -445,8 +872,10 @@ class RecorderApp:
         self.out_devices = self.player.get_output_devices()
         picker = tk.Toplevel(self.root)
         picker.overrideredirect(True)
-        # Full screen 480x320
-        picker.geometry("480x320+0+0")
+        
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        picker.geometry(f"{screen_w}x{screen_h}+0+0")
         picker.configure(bg=self.bg_color, highlightthickness=0, bd=0)
         picker.grab_set()
         
@@ -483,7 +912,9 @@ class RecorderApp:
     def show_channel_picker(self):
         picker = tk.Toplevel(self.root)
         picker.overrideredirect(True)
-        picker.geometry("480x320+0+0")
+        screen_w = self.root.winfo_screenwidth()
+        screen_h = self.root.winfo_screenheight()
+        picker.geometry(f"{screen_w}x{screen_h}+0+0")
         picker.configure(bg=self.bg_color, highlightthickness=0, bd=0)
         picker.grab_set()
         
@@ -1034,6 +1465,12 @@ class RecorderApp:
     def monitor_audio_levels(self):
         if not self.audio_monitoring:
             return
+        
+        # Don't monitor levels via arecord if we are currently recording (avoids hardware conflict)
+        if recorder.is_recording:
+            self.root.after(1000, self.monitor_audio_levels)
+            return
+
         try:
             recorder.log("alsa device: " + self.alsa_device+ " inputs: " + str(len(self.inputs)))
         
@@ -1053,15 +1490,21 @@ class RecorderApp:
         self.frames[name].pack(fill=tk.BOTH, expand=True)
 
         if name == "inputs":
-            self.audio_monitoring = True
-            self.create_inputs_screen() # Ricrea sempre per gestire stato disconnesso
-            if recorder.is_device_connected():
-                self.refresh_card()
-                self.refresh_inputs()
-                self.update_inputs_screen()
-                self.monitor_audio_levels()
+            if not self.audio_monitoring:
+                self.audio_monitoring = True
+                self.create_inputs_screen() # Ricrea sempre per gestire stato disconnesso
+                if recorder.is_device_connected():
+                    self.refresh_card()
+                    self.refresh_inputs()
+                    self.update_inputs_screen()
+                    self.monitor_audio_levels()
+            else:
+                # Se è già attivo, aggiorna solo la vista per gestire disconnessioni
+                self.create_inputs_screen()
         elif name == "output":
             self.create_output_screen()
+        elif name == "wifi_config":
+            self.scan_wifi_networks()
         elif name == "playback_browser":
             self.refresh_session_list()
         elif name == "mixer":
@@ -1081,10 +1524,14 @@ class RecorderApp:
             self.update_samplerate_buttons()
             self.update_wifi_buttons()
             self.update_wifi_ssid()
+            self.update_clock_label()
 
     # --- LOG --- 
-    # mostro solo gli ultimi 150 caratteri 
     def append_log(self, msg):
+        # Thread-safe log append
+        self.root.after(0, self._append_log_main, msg)
+
+    def _append_log_main(self, msg):
         self.log_lines.append(msg)
         if len(self.log_lines) > 50:
             self.log_lines = self.log_lines[-50:]
@@ -1128,6 +1575,10 @@ class RecorderApp:
 
 
     def status_callback(self, text, color):
+        # Thread-safe status update
+        self.root.after(0, self._status_callback_main, text, color)
+
+    def _status_callback_main(self, text, color):
         recorder.log(f"Status update: {text} (color: {color})")
         self.status_label.config(text=text, fg=color)
         self.status = text
@@ -1252,15 +1703,23 @@ class RecorderApp:
         self.update_info_label()
         self.root.after(1000, self.update_status)
         
-        # Nascondi/Mostra i pulsanti Settings, Inputs, Playback
-        if recorder.is_recording:
-            self.settings_button.pack_forget()
-            self.inputs_button.pack_forget()
-            self.playback_button.pack_forget()
-        else:
-            self.settings_button.pack(side=tk.LEFT, anchor="nw")
-            self.inputs_button.pack(side=tk.RIGHT, anchor="ne")
-            self.playback_button.pack(side=tk.RIGHT, anchor="ne", padx=2)
+        # Nascondi/Mostra i pulsanti Settings, Inputs, Playback, Output
+        is_rec = getattr(recorder, "is_recording", False)
+        # Solo se siamo nel frame home
+        if self.frames["home"].winfo_viewable():
+            if is_rec:
+                if self.settings_button.winfo_viewable():
+                    self.settings_button.pack_forget()
+                    self.inputs_button.pack_forget()
+                    self.playback_button.pack_forget()
+                    self.output_button.pack_forget()
+            else:
+                if not self.settings_button.winfo_viewable():
+                    # Ripristina con i parametri originali di create_home_screen
+                    self.settings_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=3)
+                    self.inputs_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=3)
+                    self.output_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=3)
+                    self.playback_button.pack(side=tk.LEFT, expand=True, fill=tk.X, padx=3)
 
 if __name__ == "__main__":
     main_window = tk.Tk()

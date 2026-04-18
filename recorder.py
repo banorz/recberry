@@ -23,24 +23,12 @@ USB_MOUNT_POINT = "/mnt/usbrecorder"
 is_recording = False
 recording_process = None
 recording_thread = None
-sync_thread = None
 current_storage = None  # "USB" o "SD"
 recording_start_time = None
 log_callback = None
 available_inputs = 0
 status = ''
 
-def periodic_sync_worker():
-    """Lancia il comando sync ogni 30 secondi finché la registrazione è attiva."""
-    global is_recording
-    while is_recording:
-        try:
-            subprocess.run(['sync'], check=False)
-        except Exception:
-            pass
-        for _ in range(30):
-            if not is_recording: break
-            time.sleep(1)
 _samplerate = 48000
 _user_name = getpass.getuser()
 _user_info = pwd.getpwnam(_user_name)
@@ -402,12 +390,8 @@ def is_device_connected():
         return False
 
 def _record_audio_thread(alsa_device, session_name, selected_inputs, channel_count, status_callback=None):
-    global is_recording, recording_process, status, current_storage, sync_thread
+    global is_recording, recording_process, status, current_storage
     log(f"Starting recording session: {session_name} from ALSA device: {alsa_device}")
-
-    # Avvia il thread di sync periodico
-    sync_thread = threading.Thread(target=periodic_sync_worker, daemon=True)
-    sync_thread.start()
 
     part = 1
     while is_recording:
@@ -444,19 +428,19 @@ def _record_audio_thread(alsa_device, session_name, selected_inputs, channel_cou
         command = [
             'ffmpeg', '-y', '-nostdin',
             '-f', 'alsa',
-            '-thread_queue_size', '4096',  # Increased buffer
+            '-thread_queue_size', '16384',  # Increased buffer massively to survive IO stalls
             '-use_wallclock_as_timestamps', '1',
             '-channels', str(channel_count),
             '-ar', str(_samplerate),
             '-i', alsa_device,
         ]
-
         for i in selected_inputs:
             command.extend([
                 '-map_channel', f'0.0.{i}',
                 '-af', 'aresample=async=1',  # Compensate for clock jitter
                 '-ar', str(_samplerate),
                 '-c:a', 'flac',
+                '-compression_level', '0',   # Minimal CPU usage during recording
                 os.path.join(part_dir, f'ch{i+1}.flac')
             ])
 
@@ -622,7 +606,7 @@ def start_recording(selected_inputs=None, status_callback=None):
     return True
 
 def stop_recording():
-    global is_recording, recording_process, recording_thread, recording_start_time, sync_thread
+    global is_recording, recording_process, recording_thread, recording_start_time
     if not is_recording:
         log("Not currently recording.")
         unmount_usb_drive()
@@ -643,10 +627,6 @@ def stop_recording():
             log("Warning: Recording thread did not join. Forcing kill on ffmpeg.")
             if recording_process and recording_process.poll() is None:
                 recording_process.kill()
-
-    # Aspetta il thread di sync
-    if sync_thread and sync_thread.is_alive():
-        sync_thread.join(timeout=2)
 
     log("Recording stopped. Final sync...")
     subprocess.run(['sync'], check=False)
