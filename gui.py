@@ -13,6 +13,7 @@ import random
 import threading
 import numpy as np
 import datetime
+import shutil
 
 class RecorderApp:
     def __init__(self, root):
@@ -389,6 +390,46 @@ class RecorderApp:
             pass
         # Polling ogni 3 secondi
         self.root.after(3000, self.update_temp)
+
+    def get_free_time_string(self, path=None):
+        try:
+            if path is None:
+                # Logica per Standby: USB se montata, altrimenti SD
+                usb_path = recorder.USB_MOUNT_POINT
+                if os.path.ismount(usb_path):
+                    path = usb_path
+                else:
+                    path = os.path.expanduser("~/")
+            
+            usage = shutil.disk_usage(path)
+            free_bytes = usage.free
+            
+            # Calcolo bitrate stimato FLAC
+            n_ch = sum(self.input_enabled)
+            if n_ch == 0:
+                n_ch = len(self.inputs) if self.inputs else 1
+            
+            bytes_per_second = n_ch * self.samplerate * 3 * 0.7
+            
+            if bytes_per_second <= 0:
+                return ""
+            
+            seconds_left = free_bytes / bytes_per_second
+            
+            hours = int(seconds_left // 3600)
+            minutes = int((seconds_left % 3600) // 60)
+            
+            if hours > 999:
+                return "FREE: >999h"
+            
+            if hours > 0:
+                return f"FREE: {hours}h {minutes}m"
+            else:
+                return f"FREE: {minutes}m"
+        except Exception:
+            return ""
+        except Exception:
+            return ""
 
     def show_time_picker(self):
         picker = tk.Toplevel(self.root)
@@ -981,12 +1022,16 @@ class RecorderApp:
         header = tk.Frame(frame, bg=self.bg_color)
         header.pack(fill=tk.X)
         
-        tk.Button(
-            header, text="Back", command=lambda: self.show_frame("home"),
+        self.browser_back_btn = tk.Button(
+            header, text="Back", command=self.back_from_browser,
             font=self.button_font, bg="#444", fg="#FFD700", relief=tk.FLAT, borderwidth=0, padx=30, pady=10
-        ).pack(side=tk.LEFT)
+        )
+        self.browser_back_btn.pack(side=tk.LEFT)
         
-        tk.Label(header, text="Select Session", font=self.button_font, bg=self.bg_color, fg=self.fg_color).pack(side=tk.LEFT, padx=20)
+        tk.Label(header, text="Sessions", font=self.medium_font, bg=self.bg_color, fg=self.fg_color).pack(side=tk.LEFT, padx=10)
+        
+        self.browser_free_label = tk.Label(header, text="", font=self.log_font, bg=self.bg_color, fg="#FFD700")
+        self.browser_free_label.pack(side=tk.LEFT, expand=True)
         
         # Storage Toggle
         self.storage_toggle_btn = tk.Button(
@@ -1016,20 +1061,52 @@ class RecorderApp:
         )
         self.open_mixer_btn.pack(fill=tk.X, padx=30, pady=10)
 
-    def toggle_playback_storage(self):
+    def back_from_browser(self):
         if self.playback_storage == "USB":
-            # Switch to SD
-            self.playback_storage = "SD"
-            recorder.unmount_usb_drive()
+            # Blocca l'interfaccia e mostra status mentre smonta
+            self.browser_back_btn.config(state=tk.DISABLED)
+            self.storage_toggle_btn.config(state=tk.DISABLED)
+            self.browser_free_label.config(text="UNMOUNTING...", fg="#FF4500")
+            
+            def work():
+                recorder.unmount_usb_drive()
+                # Torna alla home solo a operazione completata
+                def finish():
+                    self.playback_storage = "SD"
+                    self.browser_back_btn.config(state=tk.NORMAL)
+                    self.storage_toggle_btn.config(state=tk.NORMAL)
+                    self.browser_free_label.config(text="")
+                    self.update_storage_button_text()
+                    self.show_frame("home")
+                
+                self.root.after(0, finish)
+            
+            threading.Thread(target=work, daemon=True).start()
         else:
-            # Switch to USB
-            recorder.log("Playback: Attempting to mount USB...")
-            if recorder.mount_usb_drive():
-                self.playback_storage = "USB"
-            else:
-                recorder.log("Playback: USB mount failed, staying on SD.")
-                self.playback_storage = "SD"
+            self.show_frame("home")
+
+    def toggle_playback_storage(self):
+        self.storage_toggle_btn.config(state=tk.DISABLED)
+        self.browser_back_btn.config(state=tk.DISABLED)
+        if self.playback_storage == "USB":
+            self.browser_free_label.config(text="UNMOUNTING...", fg="#FF4500")
+            def work():
+                recorder.unmount_usb_drive()
+                self.root.after(0, lambda: self.finish_storage_toggle("SD"))
+        else:
+            self.browser_free_label.config(text="MOUNTING...", fg="#FFD700")
+            def work():
+                success = recorder.mount_usb_drive()
+                self.root.after(0, lambda: self.finish_storage_toggle("USB" if success else "SD"))
         
+        threading.Thread(target=work, daemon=True).start()
+
+    def finish_storage_toggle(self, result_storage):
+        self.playback_storage = result_storage
+        self.storage_toggle_btn.config(state=tk.NORMAL)
+        self.browser_back_btn.config(state=tk.NORMAL)
+        # Resettiamo il testo così refresh_session_list può scrivere il FREE:
+        self.browser_free_label.config(text="")
         self.update_storage_button_text()
         self.refresh_session_list()
 
@@ -1046,6 +1123,15 @@ class RecorderApp:
             recorder.log("USB not mounted, falling back to SD for playback.")
 
         base = recorder.USB_MOUNT_POINT if self.playback_storage == "USB" else recorder.FALLBACK_STORAGE_PATH
+        
+        # Aggiorna indicatore spazio libero nel browser
+        if hasattr(self, "browser_free_label"):
+            # Se la label è vuota o contiene già FREE, aggiorniamo.
+            # Se contiene MOUNTING/UNMOUNTING e siamo ancora occupati, non sovrascriviamo.
+            current_txt = self.browser_free_label.cget("text")
+            if "MOUNTING" not in current_txt:
+                free_str = self.get_free_time_string(path=base)
+                self.browser_free_label.config(text=free_str, fg="#FFD700")
         
         if os.path.exists(base):
             for folder in sorted(os.listdir(base), reverse=True):
@@ -1506,6 +1592,9 @@ class RecorderApp:
         elif name == "wifi_config":
             self.scan_wifi_networks()
         elif name == "playback_browser":
+            # Assicuriamoci che i tasti siano abilitati (nel caso fossimo usciti male)
+            if hasattr(self, "browser_back_btn"): self.browser_back_btn.config(state=tk.NORMAL)
+            if hasattr(self, "storage_toggle_btn"): self.storage_toggle_btn.config(state=tk.NORMAL)
             self.refresh_session_list()
         elif name == "mixer":
             self.update_playback_time()
@@ -1518,7 +1607,8 @@ class RecorderApp:
                     self.play_btn.config(text="Play", bg="#008000")
             
             if name == "home" and self.playback_storage == "USB":
-                recorder.unmount_usb_drive()
+                # Lo smontaggio è ora gestito esplicitamente da back_from_browser
+                pass
         
         if name == "settings":
             self.update_samplerate_buttons()
