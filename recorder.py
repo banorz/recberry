@@ -35,9 +35,51 @@ _user_info = pwd.getpwnam(_user_name)
 _uid = _user_info.pw_uid
 _gid = _user_info.pw_gid
 
+usb_watchdog_callback = None
+_watchdog_stop_event = threading.Event()
+
 def set_log_callback(cb):
     global log_callback
     log_callback = cb
+
+def set_usb_watchdog_callback(cb):
+    global usb_watchdog_callback
+    usb_watchdog_callback = cb
+
+def _usb_watchdog_fn():
+    global usb_watchdog_callback
+    last_urb_log_time = 0
+    try:
+        proc = subprocess.Popen(
+            ['journalctl', '-f', '-k', '--no-pager', '--output=cat'],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, bufsize=1
+        )
+        for line in proc.stdout:
+            if _watchdog_stop_event.is_set():
+                proc.terminate()
+                break
+            line = line.strip()
+            if not line:
+                continue
+            if 'retire_capture_urb' in line:
+                now = time.time()
+                if now - last_urb_log_time >= 10:
+                    log(f"[USB] Segnale audio degradato: {line}")
+                    last_urb_log_time = now
+                    if usb_watchdog_callback:
+                        usb_watchdog_callback('urb_warning', line)
+            elif 'USB disconnect' in line:
+                log(f"[USB] Dispositivo disconnesso: {line}")
+                if usb_watchdog_callback:
+                    usb_watchdog_callback('disconnect', line)
+    except Exception as e:
+        log(f"[USB] Watchdog error: {e}")
+
+def start_usb_watchdog():
+    _watchdog_stop_event.clear()
+    t = threading.Thread(target=_usb_watchdog_fn, daemon=True, name="usb-watchdog")
+    t.start()
+    log("USB watchdog avviato.")
 
 def get_input_levels(alsa_device, inputs_count):
     """Restituisce i livelli audio in dBFS per ciascun canale usando arecord (buffer ~50ms)."""

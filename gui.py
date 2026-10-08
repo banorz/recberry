@@ -77,6 +77,7 @@ class RecorderApp:
 
         # Log
         self.log_lines = []
+        self._usb_warn_clear_job = None
         recorder.set_log_callback(self.append_log)
         self.recording_time = 0
         self.last_time = 0
@@ -104,6 +105,8 @@ class RecorderApp:
         self.update_wifi_ssid()
         self.refresh_card()
         self.refresh_inputs()
+        recorder.set_usb_watchdog_callback(self._on_usb_watchdog_event)
+        recorder.start_usb_watchdog()
 
     def get_version(self):
         try:
@@ -588,6 +591,11 @@ class RecorderApp:
             frame, text="USB AUDIO NOT FOUND", font=self.log_font, bg=self.bg_color, fg="#FF4500"
         )
         # We'll pack this only when device is missing
+
+        self.usb_warn_label = tk.Label(
+            frame, text="⚠ USB instabile", font=self.log_font, bg=self.bg_color, fg="#FFD700"
+        )
+        # We'll pack this only when URB warnings are detected
 
         self.info_label = tk.Label(
             frame, text="", font=self.log_font, bg=self.bg_color, fg="#FFD700"
@@ -1616,7 +1624,24 @@ class RecorderApp:
             self.update_wifi_ssid()
             self.update_clock_label()
 
-    # --- LOG --- 
+    # --- USB WATCHDOG ---
+    def _on_usb_watchdog_event(self, event_type, line):
+        self.root.after(0, self._handle_usb_watchdog_event, event_type, line)
+
+    def _handle_usb_watchdog_event(self, event_type, line):
+        if event_type == 'urb_warning':
+            if not self.usb_warn_label.winfo_viewable():
+                self.usb_warn_label.pack(after=self.status_label, pady=(4, 0))
+            if self._usb_warn_clear_job:
+                self.root.after_cancel(self._usb_warn_clear_job)
+            self._usb_warn_clear_job = self.root.after(30000, self._clear_usb_warning)
+
+    def _clear_usb_warning(self):
+        if self.usb_warn_label.winfo_viewable():
+            self.usb_warn_label.pack_forget()
+        self._usb_warn_clear_job = None
+
+    # --- LOG ---
     def append_log(self, msg):
         # Thread-safe log append
         self.root.after(0, self._append_log_main, msg)
